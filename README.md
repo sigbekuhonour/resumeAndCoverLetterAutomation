@@ -3,7 +3,7 @@ I don't want to have to write out cover letter and resume for every job so i dec
 
 # Resume and cover letter for job application automation  project  
   
-# ++The Hybrid Architecture++  
+# The Hybrid Architecture 
 • **The Scraper (Python):** A simple script that pulls job descriptions from a URL.  
 • **The Brain (C# / .NET 9):** An API that receives the job description, talks to AI (Amazon Bedrock), and formats your resume.  
 • **The Cloud (AWS):** Hosting everything so you can talk about it in your exam.  
@@ -41,5 +41,5 @@ I don't want to have to write out cover letter and resume for every job so i dec
 • **Task:** Write a README.md for your GitHub. Explain how you used C# and AWS.  
 • **Goal:** This is what you show your manager on Day 1.  
 • **Commitment:** 3 hours.  
-![Install NET 9 SDK &](Attachments/E677C3A5-81F2-4CA4-A115-E8C1AF05CCA4.heic)  
+Install NET 9 SDK 
 
