@@ -1,0 +1,182 @@
+# Running & Testing Guide
+
+## Prerequisites
+
+- Python 3.11+ (`python3.11 --version`)
+- Node.js 18+ (`node --version`)
+- Docker (optional, for containerized backend)
+- All API keys configured (see Environment Setup below)
+
+## Environment Setup
+
+### Backend (`backend/.env`)
+
+Copy the example and fill in real values:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+| Variable | Where to get it |
+|----------|----------------|
+| `SUPABASE_URL` | Supabase Dashboard → Settings → API → Project URL |
+| `SUPABASE_SERVICE_KEY` | Supabase Dashboard → Settings → API → service_role key |
+| `SUPABASE_JWT_SECRET` | Supabase Dashboard → Settings → API → JWT Secret |
+| `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
+| `TAVILY_API_KEY` | https://app.tavily.com |
+| `FIRECRAWL_API_KEY` | https://www.firecrawl.dev |
+| `FRONTEND_URL` | `http://localhost:3000` (local) or your Vercel URL |
+
+### Frontend (`frontend/.env.local`)
+
+Copy the example and fill in real values:
+
+```bash
+cp frontend/.env.example frontend/.env.local
+```
+
+| Variable | Where to get it |
+|----------|----------------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Same as `SUPABASE_URL` above |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Settings → API → anon public key |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` (local) or your Cloud Run URL |
+
+---
+
+## Running Locally (Without Docker)
+
+### 1. Backend
+
+```bash
+cd backend
+
+# First time only: create venv and install deps
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Run the server
+.venv/bin/uvicorn main:app --reload --port 8000
+```
+
+Backend runs at **http://localhost:8000**. Check health: `curl http://localhost:8000/health`
+
+API docs available at **http://localhost:8000/docs** (Swagger UI).
+
+### 2. Frontend
+
+```bash
+cd frontend
+
+# First time only: install deps
+npm install
+
+# Run the dev server
+npm run dev
+```
+
+Frontend runs at **http://localhost:3000**.
+
+### 3. Test the Flow
+
+1. Open http://localhost:3000 — redirects to `/login`
+2. Sign up with email/password (or Google if configured)
+3. Click **+ New Chat** in the sidebar
+4. Type something like: "I want to apply for a Senior Python Developer role at Google"
+5. The AI should search for jobs, ask you questions, and eventually generate documents
+
+---
+
+## Running Locally (With Docker)
+
+### Backend Only (Docker)
+
+```bash
+cd backend
+
+# Build the image
+docker build -t resume-api .
+
+# Run the container
+docker run --rm -p 8000:8000 --env-file .env resume-api
+```
+
+Backend runs at **http://localhost:8000**. Frontend still runs with `npm run dev` as above.
+
+### Full Stack (Docker Compose) — optional
+
+If you want both services containerized, create `docker-compose.yml` at the project root:
+
+```yaml
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Run: `docker compose up --build`
+
+---
+
+## Running Tests
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/ -v
+```
+
+---
+
+## API Endpoints Reference
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | No | Health check |
+| POST | `/conversations` | Yes | Create new conversation `{ "mode": "job_to_resume" }` |
+| GET | `/conversations` | Yes | List your conversations |
+| GET | `/conversations/{id}` | Yes | Get conversation with messages |
+| POST | `/conversations/{id}/messages` | Yes | Send message, get SSE stream |
+| GET | `/documents/{id}/download` | Yes | Get signed download URL |
+
+**Auth:** Pass `Authorization: Bearer <supabase-jwt>` header.
+
+**SSE Events** from `/conversations/{id}/messages`:
+- `event: message` — AI text chunk `{"content": "..."}`
+- `event: status` — Tool status `{"tool": "search_jobs", "state": "running"|"done"}`
+- `event: document` — Doc ready `{"document_id": "...", "doc_type": "...", "download_url": "..."}`
+- `event: error` — Error `{"message": "..."}`
+
+---
+
+## Troubleshooting
+
+**Backend won't start:**
+- Check `.env` file exists in `backend/` and all values are filled in
+- Make sure you're using Python 3.11+ (`python3.11 --version`)
+- Run `.venv/bin/pip install -r requirements.txt` again
+
+**Frontend build fails with "Supabase URL required":**
+- Make sure `frontend/.env.local` exists with all 3 values filled in
+
+**"401 Unauthorized" on API calls:**
+- Make sure `SUPABASE_JWT_SECRET` in backend `.env` matches your Supabase project
+- Check that the frontend is sending the JWT token (look at Network tab)
+
+**Google OAuth not working:**
+- You need to set up OAuth credentials in GCP Console
+- Redirect URI must be `https://<project-ref>.supabase.co/auth/v1/callback`
+- Enable Google provider in Supabase Dashboard → Auth → Providers
+
+**CORS errors in browser:**
+- Make sure `FRONTEND_URL` in backend `.env` matches where the frontend runs
+- For local dev, it should be `http://localhost:3000`
