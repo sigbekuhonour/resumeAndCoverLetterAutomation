@@ -39,8 +39,8 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col h-screen">
-      <div className="p-4 border-b border-gray-700">
+    <aside className="w-64 bg-surface-dark text-content-inverse flex flex-col h-screen">
+      <div className="p-4 border-b border-border-dark">
         <h1 className="text-lg font-bold">Resume AI</h1>
       </div>
 
@@ -55,7 +55,7 @@ export default function Sidebar() {
         </select>
         <button
           onClick={handleNew}
-          className="w-full mt-2 p-2 bg-blue-600 rounded hover:bg-blue-700 transition text-sm"
+          className="w-full mt-2 p-2 bg-primary rounded hover:bg-primary-hover transition text-sm"
         >
           + New Chat
         </button>
@@ -75,16 +75,16 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <div className="p-3 border-t border-gray-700">
+      <div className="p-3 border-t border-border-dark">
         <button
           onClick={() => router.push("/history")}
-          className="w-full p-2 text-sm text-gray-400 hover:text-white transition"
+          className="w-full p-2 text-sm text-content-secondary hover:text-content-inverse transition"
         >
           History
         </button>
         <button
           onClick={handleSignOut}
-          className="w-full p-2 text-sm text-gray-400 hover:text-white transition"
+          className="w-full p-2 text-sm text-content-secondary hover:text-content-inverse transition"
         >
           Sign out
         </button>

@@ -11,8 +11,8 @@ export default function ChatMessage({ role, content }: ChatMessageProps) {
       <div
         className={`max-w-[70%] px-4 py-3 rounded-2xl ${
           role === "user"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-900"
+            ? "bg-primary text-content-inverse"
+            : "bg-surface-secondary text-content"
         }`}
       >
         <p className="whitespace-pre-wrap">{content}</p>

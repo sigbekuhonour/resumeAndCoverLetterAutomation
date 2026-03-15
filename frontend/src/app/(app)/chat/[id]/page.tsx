@@ -60,6 +60,16 @@ export default function ChatPage() {
         data: { session },
       } = await supabase.auth.getSession();
 
+      if (!session?.access_token) {
+        console.error("[chat] No session for SSE request");
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Error: Not authenticated — please sign in again." },
+        ]);
+        setStreaming(false);
+        return;
+      }
+
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const response = await fetch(
         `${API_URL}/conversations/${id}/messages`,
@@ -67,7 +77,7 @@ export default function ChatPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
+            Authorization: `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({ content: userMsg }),
         }
@@ -147,7 +157,7 @@ export default function ChatPage() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6">
         {messages.length === 0 && (
-          <div className="text-center text-gray-400 mt-20">
+          <div className="text-center text-content-secondary mt-20">
             <p className="text-xl font-medium">Start a conversation</p>
             <p className="text-sm mt-2">
               Describe the job you want to apply for, or paste a job URL.
@@ -183,13 +193,13 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="flex-1 px-4 py-3 border border-border rounded-lg text-content bg-surface focus:ring-2 focus:ring-primary focus:border-transparent"
             disabled={streaming}
           />
           <button
             type="submit"
             disabled={streaming || !input.trim()}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="px-6 py-3 bg-primary text-content-inverse rounded-lg hover:bg-primary-hover transition disabled:opacity-50"
           >
             Send
           </button>

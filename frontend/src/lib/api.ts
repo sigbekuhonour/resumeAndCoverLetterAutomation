@@ -8,11 +8,15 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     data: { session },
   } = await supabase.auth.getSession();
 
+  if (!session?.access_token) {
+    throw new Error("Not authenticated");
+  }
+
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${session?.access_token}`,
+      Authorization: `Bearer ${session.access_token}`,
       ...options.headers,
     },
   });

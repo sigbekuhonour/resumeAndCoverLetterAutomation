@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import AsyncGenerator
 from google import genai
 from google.genai import types
@@ -6,6 +7,8 @@ from sse_starlette.sse import ServerSentEvent
 from config import settings
 from db import supabase
 import tools
+
+logger = logging.getLogger(__name__)
 
 gemini_client = genai.Client(api_key=settings.gemini_api_key)
 
@@ -203,15 +206,23 @@ async def stream_chat(
         has_function_call = False
         function_call_content = None
 
-        response_stream = gemini_client.models.generate_content_stream(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=full_system,
-                tools=[TOOL_DECLARATIONS],
-                temperature=0.7,
-            ),
-        )
+        try:
+            response_stream = gemini_client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=full_system,
+                    tools=[TOOL_DECLARATIONS],
+                    temperature=0.7,
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            yield ServerSentEvent(
+                data=json.dumps({"message": f"AI error: {str(e)}"}),
+                event="error",
+            )
+            break
 
         for chunk in response_stream:
             if not chunk.candidates or not chunk.candidates[0].content.parts:
@@ -241,12 +252,15 @@ async def stream_chat(
                             event="document",
                         )
 
+                    # Gemini expects function responses as dicts
+                    tool_response = result if isinstance(result, dict) else {"results": result}
+
                     contents.append(function_call_content)
                     contents.append(types.Content(
                         role="user",
                         parts=[types.Part.from_function_response(
                             name=fc.name,
-                            response=result,
+                            response=tool_response,
                         )],
                     ))
                     break

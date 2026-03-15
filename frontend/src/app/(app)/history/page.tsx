@@ -24,21 +24,21 @@ export default function HistoryPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Conversation History</h1>
+      <h1 className="text-2xl font-bold mb-6 text-content">Conversation History</h1>
       {conversations.length === 0 ? (
-        <p className="text-gray-400">No conversations yet.</p>
+        <p className="text-content-secondary">No conversations yet.</p>
       ) : (
         <div className="space-y-3">
           {conversations.map((c) => (
             <button
               key={c.id}
               onClick={() => router.push(`/chat/${c.id}`)}
-              className="w-full text-left p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-300 transition"
+              className="w-full text-left p-4 bg-surface border border-border rounded-lg hover:border-primary transition"
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <p className="font-medium">{c.title}</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="font-medium text-content">{c.title}</p>
+                  <p className="text-sm text-content-secondary">
                     {c.mode === "job_to_resume" ? "Job → Resume" : "Find Jobs"}{" "}
                     · {new Date(c.created_at).toLocaleDateString()}
                   </p>
@@ -47,7 +47,7 @@ export default function HistoryPage() {
                   className={`text-xs px-2 py-1 rounded ${
                     c.status === "active"
                       ? "bg-green-100 text-green-700"
-                      : "bg-gray-100 text-gray-600"
+                      : "bg-surface-secondary text-content-secondary"
                   }`}
                 >
                   {c.status}

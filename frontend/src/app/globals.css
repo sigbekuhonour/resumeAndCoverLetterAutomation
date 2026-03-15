@@ -3,6 +3,20 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  --theme-primary: #2563eb;
+  --theme-primary-hover: #1d4ed8;
+  --theme-primary-light: #dbeafe;
+  --theme-surface: #ffffff;
+  --theme-surface-secondary: #f9fafb;
+  --theme-surface-dark: #111827;
+  --theme-content: #111827;
+  --theme-content-secondary: #6b7280;
+  --theme-content-inverse: #ffffff;
+  --theme-border: #d1d5db;
+  --theme-border-dark: #374151;
+  --theme-danger: #ef4444;
+  --theme-success: #22c55e;
 }
 
 @theme inline {
@@ -10,6 +24,20 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-primary: var(--theme-primary);
+  --color-primary-hover: var(--theme-primary-hover);
+  --color-primary-light: var(--theme-primary-light);
+  --color-surface: var(--theme-surface);
+  --color-surface-secondary: var(--theme-surface-secondary);
+  --color-surface-dark: var(--theme-surface-dark);
+  --color-content: var(--theme-content);
+  --color-content-secondary: var(--theme-content-secondary);
+  --color-content-inverse: var(--theme-content-inverse);
+  --color-border: var(--theme-border);
+  --color-border-dark: var(--theme-border-dark);
+  --color-danger: var(--theme-danger);
+  --color-success: var(--theme-success);
 }
 
 @media (prefers-color-scheme: dark) {

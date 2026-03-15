@@ -2,11 +2,10 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { signInAction, signUpAction } from "@/app/actions/auth";
 
 export default function LoginPage() {
   const supabase = createClient();
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,17 +17,15 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    const { error } = isSignUp
-      ? await supabase.auth.signUp({ email, password })
-      : await supabase.auth.signInWithPassword({ email, password });
+    const result = isSignUp
+      ? await signUpAction(email, password)
+      : await signInAction(email, password);
 
-    if (error) {
-      setError(error.message);
+    if (result?.error) {
+      setError(result.error);
       setLoading(false);
-      return;
     }
-
-    router.push("/chat");
+    // If no error, the server action will redirect — no client-side navigation needed
   };
 
   const handleGoogleAuth = async () => {
@@ -39,18 +36,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+    <div className="min-h-screen flex items-center justify-center bg-surface-secondary">
+      <div className="max-w-md w-full space-y-8 p-8 bg-surface rounded-lg shadow">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Resume AI</h1>
-          <p className="mt-2 text-gray-600">
+          <h1 className="text-3xl font-bold text-content">Resume AI</h1>
+          <p className="mt-2 text-content-secondary">
             Generate tailored resumes and cover letters
           </p>
         </div>
 
         <button
           onClick={handleGoogleAuth}
-          className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+          className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-border rounded-lg text-content hover:bg-surface-secondary transition"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path
@@ -75,10 +72,10 @@ export default function LoginPage() {
 
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300" />
+            <div className="w-full border-t border-border" />
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-white text-gray-500">or</span>
+            <span className="px-2 bg-surface text-content-secondary">or</span>
           </div>
         </div>
 
@@ -88,7 +85,7 @@ export default function LoginPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-3 border border-border rounded-lg text-content bg-surface focus:ring-2 focus:ring-primary focus:border-transparent"
             required
           />
           <input
@@ -96,24 +93,24 @@ export default function LoginPage() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-3 border border-border rounded-lg text-content bg-surface focus:ring-2 focus:ring-primary focus:border-transparent"
             required
           />
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {error && <p className="text-danger text-sm">{error}</p>}
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            className="w-full py-3 px-4 bg-primary text-content-inverse rounded-lg hover:bg-primary-hover transition disabled:opacity-50"
           >
             {loading ? "..." : isSignUp ? "Sign up" : "Sign in"}
           </button>
         </form>
 
-        <p className="text-center text-sm text-gray-600">
+        <p className="text-center text-sm text-content-secondary">
           {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
           <button
             onClick={() => setIsSignUp(!isSignUp)}
-            className="text-blue-600 hover:underline"
+            className="text-primary hover:underline"
           >
             {isSignUp ? "Sign in" : "Sign up"}
           </button>

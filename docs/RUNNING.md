@@ -21,7 +21,6 @@ cp backend/.env.example backend/.env
 |----------|----------------|
 | `SUPABASE_URL` | Supabase Dashboard → Settings → API → Project URL |
 | `SUPABASE_SERVICE_KEY` | Supabase Dashboard → Settings → API → service_role key |
-| `SUPABASE_JWT_SECRET` | Supabase Dashboard → Settings → API → JWT Secret |
 | `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
 | `TAVILY_API_KEY` | https://app.tavily.com |
 | `FIRECRAWL_API_KEY` | https://www.firecrawl.dev |
@@ -38,7 +37,7 @@ cp frontend/.env.example frontend/.env.local
 | Variable | Where to get it |
 |----------|----------------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Same as `SUPABASE_URL` above |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Settings → API → anon public key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Settings → API → Publishable key (`sb_publishable_...`) |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` (local) or your Cloud Run URL |
 
 ---
@@ -169,8 +168,9 @@ cd backend
 - Make sure `frontend/.env.local` exists with all 3 values filled in
 
 **"401 Unauthorized" on API calls:**
-- Make sure `SUPABASE_JWT_SECRET` in backend `.env` matches your Supabase project
+- Backend verifies tokens via Supabase JWKS (no JWT secret needed)
 - Check that the frontend is sending the JWT token (look at Network tab)
+- Make sure `SUPABASE_URL` in backend `.env` is correct (used to fetch JWKS)
 
 **Google OAuth not working:**
 - You need to set up OAuth credentials in GCP Console
