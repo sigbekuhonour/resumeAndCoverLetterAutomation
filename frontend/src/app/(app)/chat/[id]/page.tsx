@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { apiJson } from "@/lib/api";
+import { useApp } from "@/components/AppContext";
 import { createClient } from "@/lib/supabase/client";
 import ChatMessage from "@/components/ChatMessage";
 import StatusPill from "@/components/StatusPill";
@@ -27,22 +28,34 @@ interface DocumentEvent {
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
+  const { conversations, setActiveConversation } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [statuses, setStatuses] = useState<StatusEvent[]>([]);
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const initialSent = useRef(false);
+
+  // Set active conversation in context
+  useEffect(() => {
+    const conv = conversations.find((c) => c.id === id);
+    if (conv) setActiveConversation(conv);
+    return () => setActiveConversation(null);
+  }, [id, conversations, setActiveConversation]);
 
   // Load existing messages and documents
   useEffect(() => {
+    setLoadingMessages(true);
     apiJson<{ messages: Message[]; documents?: DocumentEvent[] }>(`/conversations/${id}`)
       .then((data) => {
         setMessages(data.messages || []);
         setDocuments(data.documents || []);
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setLoadingMessages(false));
   }, [id]);
 
   // Auto-send initial message from landing page
@@ -58,6 +71,19 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, statuses]);
+
+  // Auto-resize textarea
+  const adjustTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    }
+  }, []);
+
+  useEffect(() => {
+    adjustTextarea();
+  }, [input, adjustTextarea]);
 
   const sendMessage = async () => {
     if (!input.trim() || streaming) return;
@@ -75,7 +101,6 @@ export default function ChatPage() {
       } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
-        console.error("[chat] No session for SSE request");
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: "Error: Not authenticated — please sign in again." },
@@ -125,10 +150,7 @@ export default function ChatPage() {
                     const updated = [...prev];
                     const lastIdx = updated.length - 1;
                     if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                      updated[lastIdx] = {
-                        ...updated[lastIdx],
-                        content: assistantContent,
-                      };
+                      updated[lastIdx] = { ...updated[lastIdx], content: assistantContent };
                     } else {
                       updated.push({ role: "assistant", content: assistantContent });
                     }
@@ -166,58 +188,87 @@ export default function ChatPage() {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {messages.length === 0 && (
-          <div className="text-center text-content-secondary mt-20">
-            <p className="text-xl font-medium">Start a conversation</p>
-            <p className="text-sm mt-2">
+      <div className="flex-1 overflow-y-auto px-5 py-6">
+        {loadingMessages && (
+          <div className="flex items-center justify-center h-full">
+            <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
+        {!loadingMessages && messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="w-12 h-12 rounded-xl bg-bg-secondary border border-border flex items-center justify-center mb-4">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-accent">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-text-primary mb-1">Start a conversation</p>
+            <p className="text-xs text-text-tertiary text-center max-w-xs">
               Describe the job you want to apply for, or paste a job URL.
             </p>
           </div>
         )}
-        {messages.map((msg, i) => (
-          <ChatMessage key={i} role={msg.role} content={msg.content} />
-        ))}
-        {statuses.map((s, i) => (
-          <StatusPill key={`${s.tool}-${i}`} tool={s.tool} state={s.state} />
-        ))}
-        {documents.map((d) => (
-          <DownloadCard
-            key={d.document_id}
-            docType={d.doc_type}
-            downloadUrl={d.download_url}
-          />
-        ))}
-        <div ref={bottomRef} />
+        <div className="max-w-3xl mx-auto">
+          {messages.map((msg, i) => (
+            <ChatMessage key={i} role={msg.role} content={msg.content} />
+          ))}
+          {statuses.map((s, i) => (
+            <StatusPill key={`${s.tool}-${i}`} tool={s.tool} state={s.state} />
+          ))}
+          {documents.map((d) => (
+            <DownloadCard key={d.document_id} docType={d.doc_type} downloadUrl={d.download_url} />
+          ))}
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Input */}
-      <div className="border-t p-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            sendMessage();
-          }}
-          className="flex gap-3 max-w-4xl mx-auto"
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            className="flex-1 px-4 py-3 border border-border rounded-lg text-content bg-surface focus:ring-2 focus:ring-primary focus:border-transparent"
-            disabled={streaming}
-          />
-          <button
-            type="submit"
-            disabled={streaming || !input.trim()}
-            className="px-6 py-3 bg-primary text-content-inverse rounded-lg hover:bg-primary-hover transition disabled:opacity-50"
+      <div className="border-t border-border px-5 py-3">
+        <div className="max-w-3xl mx-auto">
+          <div
+            className={`flex items-end gap-2 bg-bg-secondary border border-border rounded-xl px-3.5 py-3 transition ${
+              streaming ? "opacity-50" : ""
+            }`}
           >
-            Send
-          </button>
-        </form>
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Message Resume AI..."
+              rows={1}
+              disabled={streaming}
+              className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary resize-none outline-none max-h-40"
+            />
+            <button
+              onClick={sendMessage}
+              disabled={streaming || !input.trim()}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition ${
+                input.trim() && !streaming
+                  ? "bg-accent text-white"
+                  : "bg-bg-tertiary text-text-tertiary"
+              }`}
+              aria-label="Send message"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex justify-between mt-1.5 text-[10px] text-text-tertiary px-1">
+            <span>Enter to send · Shift+Enter for newline</span>
+            <span>Powered by Gemini</span>
+          </div>
+        </div>
       </div>
     </div>
   );
