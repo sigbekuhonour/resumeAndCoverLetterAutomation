@@ -81,7 +81,9 @@ Your workflow:
 5. When you learn something important about the user, use save_user_context to remember it
 6. Once you have enough info, use generate_document to create the resume and cover letter
 
-Be conversational and helpful. Ask specific questions based on what the job requires. Don't ask for information you already have from the user's context.""",
+Be conversational and helpful. Ask specific questions based on what the job requires. Don't ask for information you already have from the user's context.
+
+IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
 
     "find_jobs": """You are a career assistant helping the user find jobs that match their profile.
 
@@ -93,7 +95,9 @@ Your workflow:
 5. For selected jobs, use scrape_job to get full details
 6. Generate tailored documents using generate_document
 
-Be proactive in suggesting roles based on the user's skills and experience.""",
+Be proactive in suggesting roles based on the user's skills and experience.
+
+IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
 }
 
 
@@ -285,3 +289,11 @@ async def stream_chat(
             "role": "assistant",
             "content": full_response,
         }).execute()
+
+        # Auto-title: update conversation title from first user message if still default
+        conv = supabase.table("conversations").select("title").eq("id", conversation_id).maybe_single().execute()
+        if conv.data and conv.data["title"] == "New conversation":
+            title = user_message[:80].strip()
+            if len(user_message) > 80:
+                title = title.rsplit(" ", 1)[0] + "..."
+            supabase.table("conversations").update({"title": title}).eq("id", conversation_id).execute()

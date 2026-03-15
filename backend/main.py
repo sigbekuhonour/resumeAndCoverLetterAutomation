@@ -88,7 +88,34 @@ async def get_conversation(
         .execute()
     )
 
-    return {**conv.data, "messages": messages.data}
+    # Load generated documents for this conversation's jobs
+    jobs = (
+        supabase.table("jobs")
+        .select("id")
+        .eq("conversation_id", conversation_id)
+        .execute()
+    )
+    docs = []
+    if jobs.data:
+        job_ids = [j["id"] for j in jobs.data]
+        for job_id in job_ids:
+            doc_results = (
+                supabase.table("generated_documents")
+                .select("id, doc_type, file_url")
+                .eq("job_id", job_id)
+                .execute()
+            )
+            for doc in doc_results.data:
+                signed = supabase.storage.from_("documents").create_signed_url(
+                    doc["file_url"], 3600
+                )
+                docs.append({
+                    "document_id": doc["id"],
+                    "doc_type": doc["doc_type"],
+                    "download_url": signed.get("signedURL", ""),
+                })
+
+    return {**conv.data, "messages": messages.data, "documents": docs}
 
 
 @app.post("/conversations/{conversation_id}/messages")

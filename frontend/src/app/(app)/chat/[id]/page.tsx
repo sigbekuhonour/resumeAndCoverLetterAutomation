@@ -33,10 +33,13 @@ export default function ChatPage() {
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load existing messages
+  // Load existing messages and documents
   useEffect(() => {
-    apiJson<{ messages: Message[] }>(`/conversations/${id}`)
-      .then((data) => setMessages(data.messages || []))
+    apiJson<{ messages: Message[]; documents?: DocumentEvent[] }>(`/conversations/${id}`)
+      .then((data) => {
+        setMessages(data.messages || []);
+        setDocuments(data.documents || []);
+      })
       .catch(console.error);
   }, [id]);
 

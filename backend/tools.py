@@ -91,6 +91,7 @@ async def generate_document(
 
         return {
             "document_id": doc_id,
+            "doc_type": doc_type,
             "download_url": signed_url.get("signedURL", ""),
         }
     except Exception as e:
