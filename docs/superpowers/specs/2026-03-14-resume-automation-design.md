@@ -36,7 +36,7 @@ Browser ──SSE──> FastAPI (Cloud Run) ──> Gemini 2.5 Flash
 
 ### Auth Validation
 
-FastAPI validates JWTs using a dependency that decodes the token with `SUPABASE_JWT_SECRET` (HS256). Every protected endpoint depends on `get_current_user()` which extracts the user ID from the token. No call back to Supabase Auth is needed — the JWT is self-contained.
+FastAPI validates JWTs via Supabase's JWKS endpoint using ES256 (ECDSA). `PyJWKClient` fetches and caches signing keys automatically. Every protected endpoint depends on `get_current_user()` which extracts the user ID from the token's `sub` claim. No shared JWT secret is needed.
 
 ### CORS
 
