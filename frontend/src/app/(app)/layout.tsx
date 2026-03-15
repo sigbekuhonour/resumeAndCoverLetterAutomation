@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AppProvider, { useApp } from "@/components/AppContext";
 import Sidebar from "@/components/Sidebar";
 import ThemeToggle from "@/components/ThemeToggle";
+import SearchOverlay from "@/components/SearchOverlay";
 import { usePathname } from "next/navigation";
 
 function TopBar() {
@@ -43,6 +44,18 @@ function TopBar() {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <AppProvider>
       <div className="flex h-screen bg-bg-primary">
@@ -52,6 +65,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex-1 flex flex-col overflow-hidden">{children}</div>
         </main>
       </div>
+      <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} />
     </AppProvider>
   );
 }
