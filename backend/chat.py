@@ -1,0 +1,299 @@
+import json
+import logging
+from typing import AsyncGenerator
+from google import genai
+from google.genai import types
+from sse_starlette.sse import ServerSentEvent
+from config import settings
+from db import supabase
+import tools
+
+logger = logging.getLogger(__name__)
+
+gemini_client = genai.Client(api_key=settings.gemini_api_key)
+
+MODEL = "gemini-2.5-flash"
+
+# Gemini function declarations
+TOOL_DECLARATIONS = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="search_jobs",
+            description="Search the web for job postings matching a query. Use when the user describes a role they want or asks to find jobs.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(type=types.Type.STRING, description="Job search query, e.g. 'Senior Python Developer'"),
+                    "location": types.Schema(type=types.Type.STRING, description="Job location, e.g. 'New York' or 'remote'"),
+                },
+                required=["query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="scrape_job",
+            description="Extract the full job description from a URL. Use after finding a job URL or when the user provides one.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "url": types.Schema(type=types.Type.STRING, description="URL of the job posting"),
+                },
+                required=["url"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="generate_document",
+            description="Generate a resume or cover letter as a .docx file. Use only after you have gathered enough information about the user and the job.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "doc_type": types.Schema(type=types.Type.STRING, description="'resume' or 'cover_letter'"),
+                    "sections": types.Schema(
+                        type=types.Type.OBJECT,
+                        description="Template variables. Resume: {name, title, summary, experiences: [{company, role, dates, bullets}], skills, education}. Cover letter: {name, date, company, hiring_manager, role, paragraphs: [str]}",
+                    ),
+                },
+                required=["doc_type", "sections"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="save_user_context",
+            description="Save information you've learned about the user for future conversations. Use when the user shares their work experience, skills, education, or other profile info.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "category": types.Schema(type=types.Type.STRING, description="Category: 'work_experience', 'skills', 'education', 'certifications', 'personal_info', or 'preferences'"),
+                    "content": types.Schema(type=types.Type.OBJECT, description="Structured data about this category"),
+                },
+                required=["category", "content"],
+            ),
+        ),
+    ]
+)
+
+SYSTEM_PROMPTS = {
+    "job_to_resume": """You are a career assistant helping the user create a tailored resume and cover letter for a specific job.
+
+Your workflow:
+1. Ask the user what position they're interested in, or accept a job URL
+2. Use search_jobs to find the posting, or scrape_job if they give a URL
+3. Analyze the job requirements
+4. Ask the user targeted questions about their relevant experience, skills, and education — one or two questions at a time, not everything at once
+5. When you learn something important about the user, use save_user_context to remember it
+6. Once you have enough info, use generate_document to create the resume and cover letter
+
+Be conversational and helpful. Ask specific questions based on what the job requires. Don't ask for information you already have from the user's context.
+
+IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
+
+    "find_jobs": """You are a career assistant helping the user find jobs that match their profile.
+
+Your workflow:
+1. Review the user's existing context to understand their background
+2. Ask what kind of roles they're looking for (or suggest based on their profile)
+3. Use search_jobs to find matching positions
+4. Present the results and let the user pick which ones interest them
+5. For selected jobs, use scrape_job to get full details
+6. Generate tailored documents using generate_document
+
+Be proactive in suggesting roles based on the user's skills and experience.
+
+IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
+}
+
+
+def _build_context_prompt(user_id: str) -> str:
+    """Load user context from Supabase and format as a prompt section."""
+    result = supabase.table("user_context").select("category, content").eq("user_id", user_id).execute()
+    if not result.data:
+        return "No prior information about this user."
+    parts = ["Here is what you already know about this user:"]
+    for ctx in result.data:
+        parts.append(f"\n**{ctx['category']}:** {json.dumps(ctx['content'])}")
+    return "\n".join(parts)
+
+
+def _build_history(conversation_id: str) -> list[types.Content]:
+    """Load conversation history from Supabase and format for Gemini."""
+    result = (
+        supabase.table("messages")
+        .select("role, content")
+        .eq("conversation_id", conversation_id)
+        .order("created_at")
+        .execute()
+    )
+    contents = []
+    for msg in result.data:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
+    return contents
+
+
+async def _execute_tool(
+    function_call: types.FunctionCall,
+    user_id: str,
+    conversation_id: str,
+    job_id: str | None,
+) -> tuple[dict, str | None]:
+    """Execute a Gemini function call and return result + optional updated job_id."""
+    name = function_call.name
+    args = dict(function_call.args) if function_call.args else {}
+
+    if name == "search_jobs":
+        result = await tools.search_jobs(**args)
+    elif name == "scrape_job":
+        result = await tools.scrape_job(**args)
+        if "error" not in result:
+            job_data = supabase.table("jobs").insert({
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "title": args.get("url", ""),
+                "url": args.get("url", ""),
+                "description_md": result.get("description_md", ""),
+            }).execute()
+            if job_data.data:
+                job_id = job_data.data[0]["id"]
+    elif name == "generate_document":
+        if not job_id:
+            result = {"error": "No job has been scraped yet in this conversation."}
+        else:
+            result = await tools.generate_document(
+                doc_type=args.get("doc_type", "resume"),
+                sections=args.get("sections", {}),
+                user_id=user_id,
+                job_id=job_id,
+            )
+    elif name == "save_user_context":
+        result = await tools.save_user_context(
+            user_id=user_id,
+            category=args.get("category", ""),
+            content=args.get("content", {}),
+            conversation_id=conversation_id,
+        )
+    else:
+        result = {"error": f"Unknown tool: {name}"}
+
+    return result, job_id
+
+
+async def stream_chat(
+    conversation_id: str,
+    user_id: str,
+    user_message: str,
+    mode: str,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Stream a chat response with function calling via SSE."""
+
+    # Save user message
+    supabase.table("messages").insert({
+        "conversation_id": conversation_id,
+        "role": "user",
+        "content": user_message,
+    }).execute()
+
+    # Build prompt
+    system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["job_to_resume"])
+    context_prompt = _build_context_prompt(user_id)
+    full_system = f"{system_prompt}\n\n{context_prompt}"
+
+    # Build history
+    history = _build_history(conversation_id)
+
+    # Track job_id for document generation
+    existing_jobs = supabase.table("jobs").select("id").eq("conversation_id", conversation_id).order("created_at", desc=True).limit(1).execute()
+    job_id = existing_jobs.data[0]["id"] if existing_jobs.data else None
+
+    contents = history
+    full_response = ""
+    max_tool_rounds = 5
+
+    for tool_round in range(max_tool_rounds):
+        has_function_call = False
+        function_call_content = None
+
+        try:
+            response_stream = gemini_client.models.generate_content_stream(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=full_system,
+                    tools=[TOOL_DECLARATIONS],
+                    temperature=0.7,
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            yield ServerSentEvent(
+                data=json.dumps({"message": f"AI error: {str(e)}"}),
+                event="error",
+            )
+            break
+
+        for chunk in response_stream:
+            if not chunk.candidates or not chunk.candidates[0].content.parts:
+                continue
+
+            for part in chunk.candidates[0].content.parts:
+                if part.function_call:
+                    has_function_call = True
+                    fc = part.function_call
+                    function_call_content = chunk.candidates[0].content
+
+                    yield ServerSentEvent(
+                        data=json.dumps({"tool": fc.name, "state": "running"}),
+                        event="status",
+                    )
+
+                    result, job_id = await _execute_tool(fc, user_id, conversation_id, job_id)
+
+                    yield ServerSentEvent(
+                        data=json.dumps({"tool": fc.name, "state": "done"}),
+                        event="status",
+                    )
+
+                    if fc.name == "generate_document" and "document_id" in result:
+                        yield ServerSentEvent(
+                            data=json.dumps(result),
+                            event="document",
+                        )
+
+                    # Gemini expects function responses as dicts
+                    tool_response = result if isinstance(result, dict) else {"results": result}
+
+                    contents.append(function_call_content)
+                    contents.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name=fc.name,
+                            response=tool_response,
+                        )],
+                    ))
+                    break
+
+                elif part.text:
+                    full_response += part.text
+                    yield ServerSentEvent(
+                        data=json.dumps({"content": part.text}),
+                        event="message",
+                    )
+
+            if has_function_call:
+                break
+
+        if not has_function_call:
+            break
+
+    # Save assistant response
+    if full_response:
+        supabase.table("messages").insert({
+            "conversation_id": conversation_id,
+            "role": "assistant",
+            "content": full_response,
+        }).execute()
+
+        # Auto-title: update conversation title from first user message if still default
+        conv = supabase.table("conversations").select("title").eq("id", conversation_id).maybe_single().execute()
+        if conv.data and conv.data["title"] == "New conversation":
+            title = user_message[:80].strip()
+            if len(user_message) > 80:
+                title = title.rsplit(" ", 1)[0] + "..."
+            supabase.table("conversations").update({"title": title}).eq("id", conversation_id).execute()
