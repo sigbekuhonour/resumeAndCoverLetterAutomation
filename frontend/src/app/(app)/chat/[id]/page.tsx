@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 import ChatMessage from "@/components/ChatMessage";
 import StatusPill from "@/components/StatusPill";
 import DownloadCard from "@/components/DownloadCard";
+import JobCard from "@/components/JobCard";
+import { apiUpload } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -25,19 +27,32 @@ interface DocumentEvent {
   download_url: string;
 }
 
+interface JobResultEvent {
+  title: string;
+  url: string;
+  snippet: string;
+  match_score: number;
+  company?: string;
+  location?: string;
+}
+
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { conversations, setActiveConversation } = useApp();
+  const { conversations, setActiveConversation, activeConversation } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [statuses, setStatuses] = useState<StatusEvent[]>([]);
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
+  const [jobResults, setJobResults] = useState<JobResultEvent[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(true);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const initialSent = useRef(false);
+  const streamingRef = useRef(false);
 
   // Set active conversation in context
   useEffect(() => {
@@ -58,41 +73,15 @@ export default function ChatPage() {
       .finally(() => setLoadingMessages(false));
   }, [id]);
 
-  // Auto-send initial message from landing page
-  useEffect(() => {
-    const initial = searchParams.get("initial");
-    if (initial && !initialSent.current) {
-      initialSent.current = true;
-      setInput(initial);
-    }
-  }, [searchParams]);
+  // Core send logic — accepts message directly, no dependency on input state
+  const doSend = useCallback(async (userMsg: string) => {
+    if (streamingRef.current) return;
 
-  // Auto-scroll
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, statuses]);
-
-  // Auto-resize textarea
-  const adjustTextarea = useCallback(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 160) + "px";
-    }
-  }, []);
-
-  useEffect(() => {
-    adjustTextarea();
-  }, [input, adjustTextarea]);
-
-  const sendMessage = async () => {
-    if (!input.trim() || streaming) return;
-
-    const userMsg = input.trim();
-    setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setStreaming(true);
+    streamingRef.current = true;
     setStatuses([]);
+    setJobResults([]);
 
     try {
       const supabase = createClient();
@@ -105,7 +94,6 @@ export default function ChatPage() {
           ...prev,
           { role: "assistant", content: "Error: Not authenticated — please sign in again." },
         ]);
-        setStreaming(false);
         return;
       }
 
@@ -168,6 +156,8 @@ export default function ChatPage() {
                   });
                 } else if (eventType === "document") {
                   setDocuments((prev) => [...prev, data]);
+                } else if (eventType === "job_result") {
+                  setJobResults((prev) => [...prev, data]);
                 } else if (eventType === "error") {
                   setMessages((prev) => [
                     ...prev,
@@ -185,7 +175,58 @@ export default function ChatPage() {
       console.error("Stream error:", err);
     } finally {
       setStreaming(false);
+      streamingRef.current = false;
     }
+  }, [id]);
+
+  const handleAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAttachError(null);
+    try {
+      await apiUpload(`/conversations/${id}/upload`, file);
+      doSend(`I've uploaded an additional document: ${file.name}. Please review it.`);
+    } catch (err) {
+      console.error("Upload failed:", err);
+      setAttachError("Upload failed — please try again.");
+    }
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+  };
+
+  // Auto-send initial message from landing page / new chat
+  useEffect(() => {
+    const initial = searchParams.get("initial");
+    if (initial && !initialSent.current && !loadingMessages) {
+      initialSent.current = true;
+      window.history.replaceState({}, "", `/chat/${id}`);
+      doSend(initial);
+    }
+  }, [searchParams, loadingMessages, id, doSend]);
+
+  // Auto-scroll
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, statuses]);
+
+  // Auto-resize textarea
+  const adjustTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    }
+  }, []);
+
+  useEffect(() => {
+    adjustTextarea();
+  }, [input, adjustTextarea]);
+
+  const sendMessage = () => {
+    if (!input.trim() || streaming) return;
+    const userMsg = input.trim();
+    setInput("");
+    doSend(userMsg);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -224,6 +265,21 @@ export default function ChatPage() {
           {statuses.map((s, i) => (
             <StatusPill key={`${s.tool}-${i}`} tool={s.tool} state={s.state} />
           ))}
+          {jobResults.map((j, i) => (
+            <JobCard
+              key={`job-${i}`}
+              title={j.title}
+              url={j.url}
+              snippet={j.snippet}
+              matchScore={j.match_score}
+              company={j.company}
+              location={j.location}
+              onAction={(msg) => {
+                setInput("");
+                doSend(msg);
+              }}
+            />
+          ))}
           {documents.map((d) => (
             <DownloadCard key={d.document_id} docType={d.doc_type} downloadUrl={d.download_url} />
           ))}
@@ -239,6 +295,30 @@ export default function ChatPage() {
               streaming ? "opacity-50" : ""
             }`}
           >
+            {activeConversation?.mode === "find_jobs" && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.png,.jpg,.jpeg"
+                  onChange={handleAttachment}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={streaming}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-accent-muted text-accent hover:bg-accent/20 transition"
+                  aria-label="Attach file"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </button>
+                {attachError && (
+                  <span className="text-xs text-red-500">{attachError}</span>
+                )}
+              </>
+            )}
             <textarea
               ref={textareaRef}
               value={input}

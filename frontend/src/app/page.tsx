@@ -1,37 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { apiJson } from "@/lib/api";
+import { apiJson, apiUpload } from "@/lib/api";
 
 const BRAND_NAME = "Resume AI";
 
+type Tab = "job_to_resume" | "find_jobs";
+
 export default function LandingPage() {
+  const [activeTab, setActiveTab] = useState<Tab>("job_to_resume");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  const handleSubmit = async () => {
+  const ensureAuth = async (returnTo?: string): Promise<boolean> => {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      const path = returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : "/login";
+      router.push(path);
+      return false;
+    }
+    return true;
+  };
+
+  const handleUrlSubmit = async () => {
     if (!input.trim()) return;
     setLoading(true);
-
     try {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push("/login");
-        return;
-      }
-
+      if (!(await ensureAuth())) return;
       const conv = await apiJson<{ id: string }>("/conversations", {
         method: "POST",
         body: JSON.stringify({ mode: "job_to_resume" }),
       });
-
       const message = `I want to apply for this job: ${input.trim()}`;
       router.push(`/chat/${conv.id}?initial=${encodeURIComponent(message)}`);
     } catch {
@@ -39,6 +44,33 @@ export default function LandingPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      if (!(await ensureAuth("/chat?mode=find_jobs"))) { setUploading(false); return; }
+      const conv = await apiJson<{ id: string }>("/conversations", {
+        method: "POST",
+        body: JSON.stringify({ mode: "find_jobs" }),
+      });
+      await apiUpload(`/conversations/${conv.id}/upload`, file);
+      router.push(`/chat/${conv.id}?initial=${encodeURIComponent("I've uploaded my resume. Please analyze it and help me find matching jobs.")}`);
+    } catch {
+      router.push("/login");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const handleUploadClick = async () => {
+    if (!(await ensureAuth("/chat?mode=find_jobs"))) return;
+    fileInputRef.current?.click();
   };
 
   return (
@@ -77,43 +109,126 @@ export default function LandingPage() {
           </h1>
 
           <p className="text-base text-text-tertiary max-w-md mx-auto mb-8 leading-relaxed">
-            Paste a job URL. Get a tailored resume and cover letter in seconds. Built for people who&apos;d rather work than format documents.
+            Two tools. One goal. Get the right job with the right documents.
           </p>
 
-          {/* CTA Input */}
+          {/* Tab Switcher */}
           <div className="max-w-lg mx-auto">
-            <div className="bg-bg-secondary border border-border rounded-xl p-1.5 flex gap-1.5">
-              <div className="flex-1 flex items-center gap-2 px-3">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary flex-shrink-0">
-                  <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                </svg>
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                  placeholder="Paste a job posting URL..."
-                  className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none py-2"
-                />
-              </div>
+            <div className="flex bg-bg-secondary border border-border rounded-lg p-1 mb-4">
               <button
-                onClick={handleSubmit}
-                disabled={!input.trim() || loading}
-                className="px-6 py-2.5 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent-hover transition disabled:opacity-50"
+                onClick={() => setActiveTab("job_to_resume")}
+                className={`flex-1 text-center py-2 text-xs font-medium rounded-md transition ${
+                  activeTab === "job_to_resume"
+                    ? "bg-accent text-white"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
               >
-                {loading ? "..." : "Generate"}
+                I have a job posting
+              </button>
+              <button
+                onClick={() => setActiveTab("find_jobs")}
+                className={`flex-1 text-center py-2 text-xs font-medium rounded-md transition ${
+                  activeTab === "find_jobs"
+                    ? "bg-accent text-white"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                Find jobs for me
               </button>
             </div>
-            <div className="flex items-center justify-center gap-4 mt-3 text-[11px] text-text-tertiary">
-              <span>LinkedIn</span>
-              <span className="text-border">·</span>
-              <span>Indeed</span>
-              <span className="text-border">·</span>
-              <span>Greenhouse</span>
-              <span className="text-border">·</span>
-              <span>Lever</span>
-              <span className="text-border">·</span>
-              <span>Any URL</span>
-            </div>
+
+            {/* Tab Content */}
+            {activeTab === "job_to_resume" ? (
+              <>
+                <div className="bg-bg-secondary border border-border rounded-xl p-1.5 flex gap-1.5">
+                  <div className="flex-1 flex items-center gap-2 px-3">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-tertiary flex-shrink-0">
+                      <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    <input
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
+                      placeholder="Paste a job posting URL..."
+                      className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none py-2"
+                    />
+                  </div>
+                  <button
+                    onClick={handleUrlSubmit}
+                    disabled={!input.trim() || loading}
+                    className="px-6 py-2.5 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent-hover transition disabled:opacity-50"
+                  >
+                    {loading ? "..." : "Generate"}
+                  </button>
+                </div>
+                <div className="flex items-center justify-center gap-4 mt-3 text-[11px] text-text-tertiary">
+                  <span>LinkedIn</span>
+                  <span className="text-border">&middot;</span>
+                  <span>Indeed</span>
+                  <span className="text-border">&middot;</span>
+                  <span>Greenhouse</span>
+                  <span className="text-border">&middot;</span>
+                  <span>Lever</span>
+                  <span className="text-border">&middot;</span>
+                  <span>Any URL</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.png,.jpg,.jpeg"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <div
+                  onClick={handleUploadClick}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) {
+                      if (!(await ensureAuth("/chat?mode=find_jobs"))) return;
+                      handleFileUpload(file);
+                    }
+                  }}
+                  className="bg-bg-secondary border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-text-tertiary transition"
+                >
+                  {uploading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                      <div className="text-sm text-text-secondary">Uploading...</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-10 h-10 rounded-lg bg-accent-muted flex items-center justify-center mx-auto mb-3">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                        </svg>
+                      </div>
+                      <div className="text-sm font-medium text-text-primary mb-1">Upload your resume</div>
+                      <div className="text-xs text-text-tertiary mb-3">PDF, DOCX, or image</div>
+                      <div className="inline-block bg-accent text-white text-xs font-medium px-4 py-1.5 rounded-lg">
+                        Choose file
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={async () => {
+                      if (!(await ensureAuth("/chat?mode=find_jobs"))) return;
+                      router.push("/chat?mode=find_jobs");
+                    }}
+                    className="text-xs text-text-tertiary hover:text-accent transition bg-transparent border-none cursor-pointer"
+                  >
+                    or describe your experience &rarr;
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -147,8 +262,8 @@ export default function LandingPage() {
               icon: (
                 <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
               ),
-              title: "Paste the URL",
-              desc: "Drop any job posting link. We extract the full description automatically.",
+              title: "Paste a URL or upload",
+              desc: "Drop any job posting link, or upload your resume to discover matching roles.",
             },
             {
               icon: (
