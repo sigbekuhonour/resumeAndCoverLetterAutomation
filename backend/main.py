@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException
+import tempfile
+import os
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from config import settings
@@ -8,8 +10,9 @@ from models import (
     CreateConversationRequest,
     SendMessageRequest,
     ConversationResponse,
+    UploadFileResponse,
 )
-from chat import stream_chat
+from chat import stream_chat, gemini_client
 
 app = FastAPI(title="Resume & Cover Letter AI", version="0.1.0")
 
@@ -21,6 +24,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+ALLOWED_MIME_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/png",
+    "image/jpeg",
+}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 @app.get("/health")
@@ -146,6 +157,73 @@ async def send_message(
             yield event
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/conversations/{conversation_id}/upload", response_model=UploadFileResponse)
+async def upload_file(
+    conversation_id: str,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    # Verify conversation belongs to user
+    conv = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Validate file type
+    if not file.content_type or file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}. Supported: PDF, DOCX, PNG, JPG")
+
+    # Read file bytes
+    file_bytes = await file.read()
+
+    # Validate file size
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File must be under 10MB")
+
+    # Upload to Supabase Storage
+    storage_path = f"{user_id}/{conversation_id}/{file.filename}"
+    try:
+        supabase.storage.from_("uploads").upload(
+            storage_path,
+            file_bytes,
+            {"content-type": file.content_type},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
+
+    # Upload to Gemini Files API
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        gemini_file = gemini_client.files.upload(file=tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini Files API upload failed: {str(e)}")
+    finally:
+        if "tmp_path" in locals():
+            os.unlink(tmp_path)
+
+    # Store metadata
+    result = supabase.table("conversation_files").insert({
+        "conversation_id": conversation_id,
+        "user_id": user_id,
+        "filename": file.filename,
+        "storage_path": storage_path,
+        "gemini_file_uri": gemini_file.uri,
+        "mime_type": file.content_type,
+        "file_size": len(file_bytes),
+    }).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to save file metadata")
+
+    row = result.data[0]
+    return UploadFileResponse(
+        file_id=row["id"],
+        filename=row["filename"],
+        gemini_file_uri=row["gemini_file_uri"],
+    )
 
 
 @app.get("/documents/{document_id}/download")
