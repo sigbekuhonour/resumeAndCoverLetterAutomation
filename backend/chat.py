@@ -67,11 +67,35 @@ TOOL_DECLARATIONS = types.Tool(
                 required=["category", "content"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="present_job_results",
+            description="Present job search results to the user as structured cards. Call this AFTER you have searched for jobs, scraped promising results, and assessed match scores.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "results": types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "title": types.Schema(type=types.Type.STRING, description="Job title"),
+                                "url": types.Schema(type=types.Type.STRING, description="Job posting URL"),
+                                "snippet": types.Schema(type=types.Type.STRING, description="Brief description of the role"),
+                                "match_score": types.Schema(type=types.Type.INTEGER, description="0-100 match percentage based on user profile"),
+                                "company": types.Schema(type=types.Type.STRING, description="Company name"),
+                                "location": types.Schema(type=types.Type.STRING, description="Location or remote status"),
+                            },
+                            required=["title", "url", "snippet", "match_score"],
+                        ),
+                    ),
+                },
+                required=["results"],
+            ),
+        ),
     ]
 )
 
-SYSTEM_PROMPTS = {
-    "job_to_resume": """You are a career assistant helping the user create a tailored resume and cover letter for a specific job.
+JOB_TO_RESUME_PROMPT = """You are a career assistant helping the user create a tailored resume and cover letter for a specific job.
 
 Your workflow:
 1. Ask the user what position they're interested in, or accept a job URL
@@ -83,22 +107,42 @@ Your workflow:
 
 Be conversational and helpful. Ask specific questions based on what the job requires. Don't ask for information you already have from the user's context.
 
-IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
+IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents."""
 
-    "find_jobs": """You are a career assistant helping the user find jobs that match their profile.
+FIND_JOBS_WITH_FILE_PROMPT = """You are a career assistant helping the user find jobs that match their profile.
+
+The user has uploaded their resume. Analyze it thoroughly — extract work experience,
+skills, education, certifications, and any other relevant details. Respond with a
+concise summary of what you found and ask if anything needs correction.
+
+Use save_user_context to persist each category you extract (work_experience, skills,
+education, certifications, personal_info).
+
+Once the user confirms their profile, ask what kind of roles they're looking for
+(or suggest based on their profile). Then use search_jobs to find matching positions.
+
+For each promising result, use scrape_job to get the full description, then assess
+how well it matches the user's profile (0-100%). Once you have assessed the results,
+use present_job_results to show them to the user as structured cards.
+
+IMPORTANT: When you generate a document, do NOT paste the download URL in your
+response. The UI will automatically show a download card."""
+
+FIND_JOBS_PROMPT = """You are a career assistant helping the user find jobs that match their profile.
 
 Your workflow:
 1. Review the user's existing context to understand their background
-2. Ask what kind of roles they're looking for (or suggest based on their profile)
-3. Use search_jobs to find matching positions
-4. Present the results and let the user pick which ones interest them
-5. For selected jobs, use scrape_job to get full details
-6. Generate tailored documents using generate_document
+2. Ask focused questions to understand their experience, skills, education, and what they're looking for
+3. Use save_user_context as you learn things about the user
+4. Once you have enough context, ask what roles they want and use search_jobs to find matching positions
+5. For each promising result, use scrape_job to get the full description, then assess how well it matches the user's profile (0-100%)
+6. Use present_job_results to show results as structured cards
+7. For selected jobs, generate tailored documents using generate_document
 
 Be proactive in suggesting roles based on the user's skills and experience.
 
-IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents.""",
-}
+IMPORTANT: When you generate a document, do NOT paste the download URL in your
+response. The UI will automatically show a download card."""
 
 
 def _build_context_prompt(user_id: str) -> str:
@@ -126,6 +170,12 @@ def _build_history(conversation_id: str) -> list[types.Content]:
         role = "user" if msg["role"] == "user" else "model"
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
     return contents
+
+
+def _get_conversation_file(conversation_id: str) -> dict | None:
+    """Get the uploaded file for a conversation. Returns the file record or None."""
+    result = supabase.table("conversation_files").select("*").eq("conversation_id", conversation_id).limit(1).execute()
+    return result.data[0] if result.data else None
 
 
 async def _execute_tool(
@@ -169,6 +219,9 @@ async def _execute_tool(
             content=args.get("content", {}),
             conversation_id=conversation_id,
         )
+    elif name == "present_job_results":
+        # Passthrough — stream_chat() handles SSE emission
+        return args, None
     else:
         result = {"error": f"Unknown tool: {name}"}
 
@@ -190,13 +243,41 @@ async def stream_chat(
         "content": user_message,
     }).execute()
 
-    # Build prompt
-    system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["job_to_resume"])
+    # Check for uploaded file (used for both prompt selection and content building)
+    file_record = _get_conversation_file(conversation_id)
+
+    # Build history (includes the just-saved user message)
+    history = _build_history(conversation_id)
+
+    # Build system prompt based on mode
+    if mode == "job_to_resume":
+        system_prompt = JOB_TO_RESUME_PROMPT
+    elif mode == "find_jobs":
+        # history has 1 entry = this is the first exchange
+        if file_record and len(history) <= 1:
+            system_prompt = FIND_JOBS_WITH_FILE_PROMPT
+        else:
+            system_prompt = FIND_JOBS_PROMPT
+    else:
+        system_prompt = JOB_TO_RESUME_PROMPT
+
     context_prompt = _build_context_prompt(user_id)
     full_system = f"{system_prompt}\n\n{context_prompt}"
 
-    # Build history
-    history = _build_history(conversation_id)
+    # If file exists and this is the first exchange, replace the user message
+    # in history with a version that includes the file attachment
+    if file_record and len(history) <= 1 and history:
+        # Pop the text-only user message that _build_history() loaded
+        history.pop()
+        # Re-add with file part included
+        user_parts = [
+            types.Part.from_uri(
+                file_uri=file_record["gemini_file_uri"],
+                mime_type=file_record["mime_type"],
+            ),
+            types.Part.from_text(user_message),
+        ]
+        history.append(types.Content(role="user", parts=user_parts))
 
     # Track job_id for document generation
     existing_jobs = supabase.table("jobs").select("id").eq("conversation_id", conversation_id).order("created_at", desc=True).limit(1).execute()
@@ -256,8 +337,14 @@ async def stream_chat(
                             event="document",
                         )
 
-                    # Gemini expects function responses as dicts
-                    tool_response = result if isinstance(result, dict) else {"results": result}
+                    # Emit job_result events for present_job_results
+                    if fc.name == "present_job_results":
+                        for job in result.get("results", []):
+                            yield ServerSentEvent(data=json.dumps(job), event="job_result")
+                        tool_response = {"status": "presented", "count": len(result.get("results", []))}
+                    else:
+                        # Gemini expects function responses as dicts
+                        tool_response = result if isinstance(result, dict) else {"results": result}
 
                     contents.append(function_call_content)
                     contents.append(types.Content(
