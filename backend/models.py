@@ -48,3 +48,9 @@ class DocumentResponse(BaseModel):
     doc_type: DocType
     file_url: str
     created_at: str
+
+
+class UploadFileResponse(BaseModel):
+    file_id: str
+    filename: str
+    gemini_file_uri: str
