@@ -137,6 +137,59 @@ async def update_profile(
     return result.data[0]
 
 
+# ── User Context ─────────────────────────────────────────────────────
+
+
+@app.put("/user-context/{context_id}")
+async def update_user_context(
+    context_id: str,
+    body: UpdateUserContextRequest,
+    user_id: str = Depends(get_current_user),
+):
+    # Verify ownership
+    existing = (
+        supabase.table("user_context")
+        .select("id")
+        .eq("id", context_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="User context not found")
+
+    result = (
+        supabase.table("user_context")
+        .update({"content": body.content})
+        .eq("id", context_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to update user context")
+    return result.data[0]
+
+
+@app.delete("/user-context/{context_id}")
+async def delete_user_context(
+    context_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    # Verify ownership
+    existing = (
+        supabase.table("user_context")
+        .select("id")
+        .eq("id", context_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="User context not found")
+
+    supabase.table("user_context").delete().eq("id", context_id).execute()
+    return {"status": "deleted"}
+
+
 # ── Conversations ────────────────────────────────────────────────────
 
 
