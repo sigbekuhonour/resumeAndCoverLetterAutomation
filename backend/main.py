@@ -500,3 +500,91 @@ async def download_document(
         doc.data["file_url"], 3600
     )
     return {"download_url": signed.get("signedURL", "")}
+
+
+# ── Individual File & Document Deletes ───────────────────────────────
+
+
+@app.delete("/conversation-files/{file_id}")
+async def delete_conversation_file(
+    file_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    # Verify ownership
+    file_row = (
+        supabase.table("conversation_files")
+        .select("id, storage_path")
+        .eq("id", file_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not file_row.data:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Remove from storage
+    try:
+        supabase.storage.from_("uploads").remove([file_row.data["storage_path"]])
+    except Exception as e:
+        logger.warning("Failed to remove upload file %s: %s", file_id[:8], e)
+
+    # Delete DB row
+    supabase.table("conversation_files").delete().eq("id", file_id).execute()
+    return {"status": "deleted"}
+
+
+@app.delete("/generated-documents/{document_id}")
+async def delete_generated_document(
+    document_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    # Verify ownership
+    doc = (
+        supabase.table("generated_documents")
+        .select("id, file_url")
+        .eq("id", document_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not doc.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Remove from storage
+    try:
+        supabase.storage.from_("documents").remove([doc.data["file_url"]])
+    except Exception as e:
+        logger.warning("Failed to remove document file %s: %s", document_id[:8], e)
+
+    # Delete DB row
+    supabase.table("generated_documents").delete().eq("id", document_id).execute()
+    return {"status": "deleted"}
+
+
+# ── Delete All Data ──────────────────────────────────────────────────
+
+
+@app.delete("/profile/all-data")
+async def delete_all_data(user_id: str = Depends(get_current_user)):
+    """Delete all user data: storage files, conversations (cascade), context, and profile."""
+    # Get all conversations for storage cleanup
+    convs = (
+        supabase.table("conversations")
+        .select("id")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    for c in convs.data:
+        _delete_conversation_storage(c["id"])
+
+    # Delete conversations (DB cascade handles messages, jobs, docs, files)
+    supabase.table("conversations").delete().eq("user_id", user_id).execute()
+
+    # Delete user context
+    supabase.table("user_context").delete().eq("user_id", user_id).execute()
+
+    # Delete profile
+    supabase.table("profiles").delete().eq("id", user_id).execute()
+
+    logger.info("Deleted all data for user %s", user_id[:8])
+    return {"status": "deleted"}
