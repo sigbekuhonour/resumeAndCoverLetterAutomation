@@ -12,6 +12,9 @@ from models import (
     SendMessageRequest,
     ConversationResponse,
     UploadFileResponse,
+    UpdateProfileRequest,
+    UpdateUserContextRequest,
+    BulkDeleteConversationsRequest,
 )
 from chat import stream_chat, gemini_client
 
@@ -47,6 +50,94 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 async def health():
     return {"status": "ok"}
 
+
+# ── Profile ──────────────────────────────────────────────────────────
+
+
+@app.get("/profile")
+async def get_profile(user_id: str = Depends(get_current_user)):
+    # Profile row
+    profile = (
+        supabase.table("profiles")
+        .select("*")
+        .eq("id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if not profile.data:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    # User context rows
+    user_context = (
+        supabase.table("user_context")
+        .select("*")
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    # Uploaded files
+    files = (
+        supabase.table("conversation_files")
+        .select("id, conversation_id, filename, storage_path, mime_type, file_size, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    files_with_urls = []
+    for f in files.data:
+        try:
+            signed = supabase.storage.from_("uploads").create_signed_url(
+                f["storage_path"], 3600
+            )
+            f["download_url"] = signed.get("signedURL", "")
+        except Exception:
+            f["download_url"] = ""
+        files_with_urls.append(f)
+
+    # Generated documents
+    docs = (
+        supabase.table("generated_documents")
+        .select("id, job_id, doc_type, file_url, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    docs_with_urls = []
+    for d in docs.data:
+        try:
+            signed = supabase.storage.from_("documents").create_signed_url(
+                d["file_url"], 3600
+            )
+            d["download_url"] = signed.get("signedURL", "")
+        except Exception:
+            d["download_url"] = ""
+        docs_with_urls.append(d)
+
+    return {
+        "profile": profile.data,
+        "user_context": user_context.data,
+        "files": files_with_urls,
+        "documents": docs_with_urls,
+    }
+
+
+@app.patch("/profile")
+async def update_profile(
+    body: UpdateProfileRequest,
+    user_id: str = Depends(get_current_user),
+):
+    result = (
+        supabase.table("profiles")
+        .update({"full_name": body.full_name})
+        .eq("id", user_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return result.data[0]
+
+
+# ── Conversations ────────────────────────────────────────────────────
 
 
 @app.post("/conversations", response_model=ConversationResponse)
