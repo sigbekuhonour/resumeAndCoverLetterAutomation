@@ -583,8 +583,6 @@ async def delete_all_data(user_id: str = Depends(get_current_user)):
     # Delete user context
     supabase.table("user_context").delete().eq("user_id", user_id).execute()
 
-    # Delete profile
-    supabase.table("profiles").delete().eq("id", user_id).execute()
-
+    # Note: profiles row is preserved so user can still sign in
     logger.info("Deleted all data for user %s", user_id[:8])
     return {"status": "deleted"}
