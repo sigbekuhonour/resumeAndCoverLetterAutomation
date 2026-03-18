@@ -41,10 +41,11 @@ function formatFileSize(bytes: number): string {
 
 function formatContextContent(
   category: string,
-  content: Record<string, unknown>
+  content: Record<string, unknown> | unknown[]
 ): React.ReactNode {
+  // Skills: render as tags
   if (category === "skills" || category === "skill") {
-    const values = Object.values(content).flat();
+    const values = Array.isArray(content) ? content : Object.values(content).flat();
     return (
       <div className="flex flex-wrap gap-1.5 mt-1">
         {values.map((v, i) => (
@@ -59,6 +60,36 @@ function formatContextContent(
     );
   }
 
+  // Array of objects (work_experience, education): render each as a block
+  if (Array.isArray(content)) {
+    return (
+      <div className="mt-1 space-y-2">
+        {content.map((item, i) => {
+          if (typeof item === "object" && item !== null) {
+            return (
+              <div key={i} className="text-xs text-text-secondary space-y-0.5">
+                {Object.entries(item as Record<string, unknown>).map(([key, value]) => (
+                  <div key={key}>
+                    <span className="text-text-tertiary capitalize">
+                      {key.replace(/_/g, " ")}:
+                    </span>{" "}
+                    {String(value)}
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          return (
+            <div key={i} className="text-xs text-text-secondary">
+              {String(item)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Flat object (personal_info): render key-value pairs
   return (
     <div className="mt-1 space-y-1">
       {Object.entries(content).map(([key, value]) => (
@@ -66,13 +97,7 @@ function formatContextContent(
           <span className="text-text-tertiary capitalize">
             {key.replace(/_/g, " ")}:
           </span>{" "}
-          {Array.isArray(value)
-            ? value.map((item, i) => (
-                <div key={i} className="ml-3 text-text-secondary">
-                  {String(item)}
-                </div>
-              ))
-            : String(value)}
+          {String(value)}
         </div>
       ))}
     </div>
