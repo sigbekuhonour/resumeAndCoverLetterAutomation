@@ -329,6 +329,70 @@ def test_upload_validation(token: str, verbose: bool) -> TestResult:
     return r.ok()
 
 
+def test_get_profile(token: str, verbose: bool) -> TestResult:
+    r = TestResult("GET /profile")
+    resp = httpx.get(f"{BASE_URL}/profile", headers=headers(token))
+    if resp.status_code != 200:
+        return r.fail(f"Status {resp.status_code}: {resp.text}")
+    body = resp.json()
+    for key in ("profile", "user_context", "uploaded_files", "generated_documents"):
+        if key not in body:
+            return r.fail(f"Missing '{key}' in response")
+    if not body["profile"].get("email"):
+        return r.fail("Missing email in profile")
+    r.info(f"Context: {len(body['user_context'])}, Files: {len(body['uploaded_files'])}, Docs: {len(body['generated_documents'])}")
+    return r.ok()
+
+
+def test_update_profile(token: str, verbose: bool) -> TestResult:
+    r = TestResult("PATCH /profile")
+    resp = httpx.patch(f"{BASE_URL}/profile", headers=headers(token),
+                       json={"full_name": "Test User"})
+    if resp.status_code != 200:
+        return r.fail(f"Status {resp.status_code}: {resp.text}")
+    if resp.json().get("full_name") != "Test User":
+        return r.fail(f"Unexpected response: {resp.json()}")
+    r.info("Updated name to 'Test User'")
+    return r.ok()
+
+
+def test_delete_conversation(token: str, verbose: bool) -> TestResult:
+    r = TestResult("DELETE /conversations/:id")
+    create = httpx.post(f"{BASE_URL}/conversations", headers=headers(token),
+                        json={"mode": "job_to_resume"})
+    conv_id = create.json()["id"]
+    r.info(f"Created: {conv_id[:8]}...")
+    del_resp = httpx.delete(f"{BASE_URL}/conversations/{conv_id}", headers=headers(token))
+    if del_resp.status_code != 200:
+        return r.fail(f"Delete status {del_resp.status_code}: {del_resp.text}")
+    if del_resp.json().get("status") != "deleted":
+        return r.fail(f"Unexpected response: {del_resp.json()}")
+    get_resp = httpx.get(f"{BASE_URL}/conversations/{conv_id}", headers=headers(token))
+    if get_resp.status_code != 404:
+        return r.fail(f"Expected 404 after delete, got {get_resp.status_code}")
+    r.info("Verified conversation deleted")
+    return r.ok()
+
+
+def test_bulk_delete(token: str, verbose: bool) -> TestResult:
+    r = TestResult("POST /conversations/bulk-delete")
+    ids = []
+    for _ in range(2):
+        resp = httpx.post(f"{BASE_URL}/conversations", headers=headers(token),
+                          json={"mode": "job_to_resume"})
+        ids.append(resp.json()["id"])
+    r.info(f"Created {len(ids)} conversations")
+    del_resp = httpx.post(f"{BASE_URL}/conversations/bulk-delete", headers=headers(token),
+                          json={"conversation_ids": ids})
+    if del_resp.status_code != 200:
+        return r.fail(f"Status {del_resp.status_code}: {del_resp.text}")
+    count = del_resp.json().get("deleted_count", 0)
+    if count != 2:
+        return r.fail(f"Expected deleted_count=2, got {count}")
+    r.info(f"Deleted {count} conversations")
+    return r.ok()
+
+
 # ─── Runner ────────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -341,6 +405,10 @@ ALL_TESTS = [
     test_upload_file,
     test_send_message_stream,
     test_upload_and_stream,
+    test_get_profile,
+    test_update_profile,
+    test_delete_conversation,
+    test_bulk_delete,
 ]
 
 TEST_MAP = {fn.__name__.replace("test_", ""): fn for fn in ALL_TESTS}
