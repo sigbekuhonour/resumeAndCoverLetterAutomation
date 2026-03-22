@@ -195,6 +195,13 @@ Rules:
 - Be conservative about tool use. If a focused conversational response is enough for this turn, set allow_tools=false.
 """
 
+TOOL_PHASE_LABELS = {
+    "search_jobs": ("search_jobs", "Searching for jobs"),
+    "scrape_job": ("read_job_posting", "Reading job posting"),
+    "save_user_context": ("save_user_context", "Saving your info"),
+    "present_job_results": ("prepare_job_matches", "Preparing job matches"),
+}
+
 
 def _build_context_prompt(user_id: str) -> str:
     """Load user context from Supabase and format as a prompt section."""
@@ -402,6 +409,139 @@ def _tools_for_router(router: dict) -> list[types.Tool]:
     return [TOOL_DECLARATIONS]
 
 
+def _status_payload(
+    *,
+    step_id: str,
+    phase: str,
+    label: str,
+    state: str,
+    tool: str | None = None,
+    detail: str | None = None,
+    meta: dict | None = None,
+) -> dict:
+    payload = {
+        "id": step_id,
+        "phase": phase,
+        "label": label,
+        "state": state,
+    }
+    if tool:
+        payload["tool"] = tool
+    if detail:
+        payload["detail"] = detail
+    if meta:
+        payload["meta"] = meta
+    return payload
+
+
+def _router_status_payload(router: dict, state: str) -> dict:
+    detail = None
+    if state == "done":
+        detail = router.get("reason")
+    return _status_payload(
+        step_id="understanding_request",
+        phase="understanding_request",
+        label="Understanding request",
+        state=state,
+        detail=detail,
+        meta={
+            "intent": router.get("intent"),
+            "response_mode": router.get("response_mode"),
+            "allow_tools": router.get("allow_tools"),
+        } if state == "done" else None,
+    )
+
+
+def _generate_document_status_metadata(args: dict, result: dict | None, state: str) -> dict:
+    doc_type = args.get("doc_type", "document")
+    label = {
+        "resume": "Generating resume",
+        "cover_letter": "Generating cover letter",
+    }.get(doc_type, "Generating document")
+    detail = None
+    meta = {"doc_type": doc_type}
+
+    if state == "done" and result:
+        plan = result.get("document_plan") or {}
+        repair_history = plan.get("repair_history") or []
+        if repair_history:
+            detail = f"Adjusted layout to fit {result.get('page_budget', 1)} page."
+            meta["repair_actions"] = [item.get("action") for item in repair_history]
+        else:
+            detail = f"{label.replace('Generating ', '').capitalize()} ready."
+        if result.get("theme_id"):
+            meta["theme_id"] = result["theme_id"]
+        if result.get("page_budget") is not None:
+            meta["page_budget"] = result["page_budget"]
+        verification = plan.get("verification") or {}
+        if verification.get("status"):
+            meta["verification_status"] = verification["status"]
+
+    return {
+        "step_id": f"generate_document:{doc_type}",
+        "phase": f"generate_{doc_type}",
+        "label": label,
+        "detail": detail,
+        "meta": meta,
+    }
+
+
+def _tool_status_payload(
+    *,
+    name: str,
+    args: dict,
+    state: str,
+    result: dict | list | None = None,
+) -> dict:
+    if name == "generate_document":
+        metadata = _generate_document_status_metadata(
+            args,
+            result if isinstance(result, dict) else None,
+            state,
+        )
+        return _status_payload(
+            step_id=metadata["step_id"],
+            phase=metadata["phase"],
+            label=metadata["label"],
+            state=state,
+            tool=name,
+            detail=metadata["detail"],
+            meta=metadata["meta"],
+        )
+
+    phase, label = TOOL_PHASE_LABELS.get(name, (name, name.replace("_", " ").title()))
+    detail = None
+    meta = None
+
+    if state == "done":
+        if name == "search_jobs" and isinstance(result, list):
+            detail = f"Found {len(result)} potential job posting{'s' if len(result) != 1 else ''}."
+            meta = {"result_count": len(result)}
+        elif name == "scrape_job" and isinstance(result, dict) and "error" not in result:
+            detail = "Captured the job description."
+        elif name == "save_user_context":
+            category = args.get("category")
+            detail = f"Saved {str(category).replace('_', ' ')} to memory." if category else "Saved new profile details."
+            meta = {"category": category}
+        elif name == "present_job_results" and isinstance(result, dict):
+            count = len(result.get("results", []))
+            detail = f"Prepared {count} match card{'s' if count != 1 else ''}."
+            meta = {"result_count": count}
+    elif state == "failed":
+        if isinstance(result, dict) and result.get("error"):
+            detail = str(result["error"])
+
+    return _status_payload(
+        step_id=name,
+        phase=phase,
+        label=label,
+        state=state,
+        tool=name,
+        detail=detail,
+        meta=meta,
+    )
+
+
 async def _execute_tool(
     function_call: types.FunctionCall,
     user_id: str,
@@ -482,11 +622,28 @@ async def stream_chat(
     all_files = _get_conversation_files(conversation_id)
     is_first_exchange = len(history) == 0
     context_prompt = _build_context_prompt(user_id)
+
+    yield ServerSentEvent(
+        data=json.dumps(
+            _status_payload(
+                step_id="understanding_request",
+                phase="understanding_request",
+                label="Understanding request",
+                state="running",
+            )
+        ),
+        event="status",
+    )
     router = _analyze_turn(
         user_message=user_message,
         mode=mode,
         context_prompt=context_prompt,
         history=history,
+    )
+
+    yield ServerSentEvent(
+        data=json.dumps(_router_status_payload(router, "done")),
+        event="status",
     )
 
     supabase.table("messages").insert({
@@ -587,14 +744,28 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
                     function_call_content = chunk.candidates[0].content
 
                     yield ServerSentEvent(
-                        data=json.dumps({"tool": fc.name, "state": "running"}),
+                        data=json.dumps(
+                            _tool_status_payload(
+                                name=fc.name,
+                                args=dict(fc.args) if fc.args else {},
+                                state="running",
+                            )
+                        ),
                         event="status",
                     )
 
                     result, job_id = await _execute_tool(fc, user_id, conversation_id, job_id)
+                    tool_state = "failed" if isinstance(result, dict) and "error" in result else "done"
 
                     yield ServerSentEvent(
-                        data=json.dumps({"tool": fc.name, "state": "done"}),
+                        data=json.dumps(
+                            _tool_status_payload(
+                                name=fc.name,
+                                args=dict(fc.args) if fc.args else {},
+                                state=tool_state,
+                                result=result,
+                            )
+                        ),
                         event="status",
                     )
 

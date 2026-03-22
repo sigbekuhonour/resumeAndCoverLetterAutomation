@@ -11,7 +11,7 @@ import {
 import { useApp } from "@/components/AppContext";
 import { createClient } from "@/lib/supabase/client";
 import ChatMessage from "@/components/ChatMessage";
-import StatusPill from "@/components/StatusPill";
+import ActivityTimeline, { type ActivityStep } from "@/components/ActivityTimeline";
 import DownloadCard from "@/components/DownloadCard";
 import JobCard from "@/components/JobCard";
 
@@ -20,15 +20,16 @@ interface Message {
   content: string;
 }
 
-interface StatusEvent {
-  tool: string;
-  state: "running" | "done";
-}
-
 interface DocumentEvent {
   document_id: string;
   doc_type: string;
   download_url: string;
+  theme_id?: string;
+  page_budget?: number;
+  document_plan?: {
+    repair_history?: Array<{ action?: string }>;
+    verification?: { status?: string };
+  };
 }
 
 interface JobResultEvent {
@@ -53,7 +54,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [statuses, setStatuses] = useState<StatusEvent[]>([]);
+  const [activitySteps, setActivitySteps] = useState<ActivityStep[]>([]);
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
   const [jobResults, setJobResults] = useState<JobResultEvent[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(() => !hasInitialMessage);
@@ -95,7 +96,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setStreaming(true);
     streamingRef.current = true;
-    setStatuses([]);
+    setActivitySteps([]);
     setJobResults([]);
 
     try {
@@ -169,14 +170,26 @@ export default function ChatPage() {
                     return updated;
                   });
                 } else if (eventType === "status") {
-                  setStatuses((prev) => {
-                    const existing = prev.findIndex((s) => s.tool === data.tool);
+                  const nextStep: ActivityStep = {
+                    id: String(data.id || data.phase || data.tool || crypto.randomUUID()),
+                    phase: String(data.phase || data.tool || "activity"),
+                    label: String(data.label || data.tool || "Working"),
+                    state: data.state === "done" || data.state === "failed" ? data.state : "running",
+                    tool: typeof data.tool === "string" ? data.tool : undefined,
+                    detail: typeof data.detail === "string" ? data.detail : undefined,
+                    meta:
+                      data.meta && typeof data.meta === "object" && !Array.isArray(data.meta)
+                        ? (data.meta as Record<string, unknown>)
+                        : undefined,
+                  };
+                  setActivitySteps((prev) => {
+                    const existing = prev.findIndex((s) => s.id === nextStep.id);
                     if (existing >= 0) {
                       const updated = [...prev];
-                      updated[existing] = data;
+                      updated[existing] = nextStep;
                       return updated;
                     }
-                    return [...prev, data];
+                    return [...prev, nextStep];
                   });
                 } else if (eventType === "document") {
                   setDocuments((prev) => [...prev, data]);
@@ -237,7 +250,7 @@ export default function ChatPage() {
   // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, statuses]);
+  }, [messages, activitySteps, documents, jobResults]);
 
   // Auto-resize textarea
   const adjustTextarea = useCallback(() => {
@@ -292,9 +305,7 @@ export default function ChatPage() {
           {messages.map((msg, i) => (
             <ChatMessage key={i} role={msg.role} content={msg.content} />
           ))}
-          {statuses.map((s, i) => (
-            <StatusPill key={`${s.tool}-${i}`} tool={s.tool} state={s.state} />
-          ))}
+          <ActivityTimeline steps={activitySteps} />
           {jobResults.map((j, i) => (
             <JobCard
               key={`job-${i}`}
