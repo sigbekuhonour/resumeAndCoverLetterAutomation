@@ -15,7 +15,7 @@ Redesign the "Find Jobs" mode to accept resume uploads, present structured job r
 | Job results display | Inline job cards in chat | Builds on existing card component pattern (DownloadCard), keeps architecture simple, match score + action buttons are structured enough |
 | Post-upload behavior | Show extracted summary → confirm → search | Builds trust without the overhead of an editable profile card. Corrections happen naturally in chat |
 
-> **Note — Landing page override:** The UI redesign spec (2026-03-15) intentionally chose a single-CTA landing page because both modes had similar text-based entry points. This spec overrides that decision because Find Jobs now has a visually distinct entry experience (file upload vs URL input). The two tabs communicate "this tool does two specific things" — which is the core product positioning goal to differentiate from generic chatbot SaaS.
+> **Note — Landing page override:** An earlier redesign pass intentionally chose a single-CTA landing page because both modes had similar text-based entry points. This spec overrides that decision because Find Jobs now has a visually distinct entry experience (file upload vs URL input). The two tabs communicate "this tool does two specific things" — which is the core product positioning goal to differentiate from generic chatbot SaaS.
 
 ## Landing Page: Tab Switcher
 
