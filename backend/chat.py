@@ -46,14 +46,14 @@ SCRAPE_JOB_DECLARATION = types.FunctionDeclaration(
 
 GENERATE_DOCUMENT_DECLARATION = types.FunctionDeclaration(
     name="generate_document",
-    description="Generate a resume or cover letter as a .docx file. Use only after you have gathered enough information about the user and the job.",
+    description="Generate a resume or cover letter as a .docx file. Use only after you have gathered enough information about the user and the job. The backend applies a deterministic document engine with approved themes.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "doc_type": types.Schema(type=types.Type.STRING, description="'resume' or 'cover_letter'"),
             "sections": types.Schema(
                 type=types.Type.OBJECT,
-                description="Template variables. Resume: {name, title, summary, experiences: [{company, role, dates, bullets}], skills, education}. Cover letter: {name, date, company, hiring_manager, role, paragraphs: [str]}",
+                description="Structured content for the document. Resume: {name, title, summary, experiences: [{company, role, dates, bullets}], skills, education}. Cover letter: {name, date, company, hiring_manager, role, paragraphs: [str]}. Optional design input: theme_id in {'classic_professional','technical_compact'}.",
             ),
         },
         required=["doc_type", "sections"],
@@ -124,6 +124,12 @@ Be conversational and helpful. Ask specific questions based on what the job requ
 
 Cover letters must fit on one page. When preparing sections for generate_document, keep the cover letter to three concise body paragraphs plus a brief closing paragraph, avoid repeating resume bullets verbatim, and keep the total body around 220-300 words.
 
+If you choose a design direction, do it by selecting an approved `theme_id` inside `sections`. Available themes:
+- `classic_professional` for balanced, conservative presentation
+- `technical_compact` for denser technical resumes and tighter page budgets
+
+Do not invent custom themes or arbitrary formatting instructions. Pick from the approved theme ids only when it adds value.
+
 IMPORTANT: When you generate a document, do NOT paste the download URL in your response. The UI will automatically show a download card. Just tell the user the document is ready and offer to make adjustments or generate additional documents."""
 
 FIND_JOBS_WITH_FILE_PROMPT = """You are a career assistant helping the user find jobs that match their profile.
@@ -145,7 +151,9 @@ use present_job_results to show them to the user as structured cards.
 IMPORTANT: When you generate a document, do NOT paste the download URL in your
 response. The UI will automatically show a download card.
 
-When generating a cover letter, keep it to one page: three concise body paragraphs plus a brief closing paragraph, and avoid repeating the resume verbatim."""
+When generating a cover letter, keep it to one page: three concise body paragraphs plus a brief closing paragraph, and avoid repeating the resume verbatim.
+
+If a theme choice would help, set `theme_id` in `sections` to either `classic_professional` or `technical_compact`. Do not invent other theme names."""
 
 FIND_JOBS_PROMPT = """You are a career assistant helping the user find jobs that match their profile.
 
@@ -161,6 +169,8 @@ Your workflow:
 Be proactive in suggesting roles based on the user's skills and experience.
 
 When generating a cover letter, keep it to one page: three concise body paragraphs plus a brief closing paragraph, and avoid repeating the resume verbatim.
+
+If a theme choice would help, set `theme_id` in `sections` to either `classic_professional` or `technical_compact`. Do not invent other theme names.
 
 IMPORTANT: When you generate a document, do NOT paste the download URL in your
 response. The UI will automatically show a download card."""

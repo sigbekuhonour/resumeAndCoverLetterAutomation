@@ -121,6 +121,36 @@ must render to PDF for final checks.
 - graphics-heavy layouts that reduce ATS compatibility
 - letting the model directly write Word formatting commands
 
+## Current Implementation Status
+
+The first production slice of the engine is now implemented in backend code.
+
+Implemented now:
+
+- deterministic `DocumentPlan` construction for `resume` and `cover_letter`
+- approved theme catalog with:
+  - `classic_professional`
+  - `technical_compact`
+- normalization and compaction rules for:
+  - resume summary
+  - resume skills
+  - experience count and bullets
+  - one-page cover-letter paragraph budgets
+- deterministic DOCX composition using safe flow-layout primitives
+- local render verification tooling on macOS via LibreOffice -> PDF -> PNG
+- backend contract that allows the model to select only approved `theme_id` values
+
+Not implemented yet:
+
+- persisted intermediate layout model beyond the current plan payload
+- automated layout verification gates that can fail generation
+- automatic repair / retry loop
+- canonical PDF-first rendering
+- broader audited theme catalog and variants
+
+This means the engine has moved from design-only into an initial controlled
+production baseline, but verification and repair are still the next major phase.
+
 ## Engine Architecture
 
 ## Stage 0: Inputs
