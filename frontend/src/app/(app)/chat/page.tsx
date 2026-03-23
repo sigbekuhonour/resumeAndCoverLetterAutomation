@@ -1,10 +1,9 @@
 "use client";
 
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { apiJson, apiUpload } from "@/lib/api";
 import { storePendingChatMessage } from "@/lib/pending-chat";
-import { useApp } from "@/components/AppContext";
 import FileUpload from "@/components/FileUpload";
 
 export default function ChatIndexPage() {
@@ -26,8 +25,6 @@ function ChatIndexContent() {
   const [uploading, setUploading] = useState(false);
   const [uploadedFilename, setUploadedFilename] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const router = useRouter();
-  const { refreshConversations } = useApp();
 
   const adjustTextarea = useCallback(() => {
     const el = textareaRef.current;
@@ -55,9 +52,8 @@ function ChatIndexContent() {
         setUploading(false);
       }
 
-      await refreshConversations();
       storePendingChatMessage(conv.id, message);
-      router.push(`/chat/${conv.id}`);
+      window.location.assign(`/chat/${conv.id}`);
     } catch (err) {
       console.error("Failed to create conversation:", err);
       setSending(false);
