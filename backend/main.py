@@ -84,6 +84,7 @@ def _document_response_payload(doc: dict) -> dict:
     return {
         "document_id": doc["id"],
         "doc_type": doc["doc_type"],
+        "created_at": doc.get("created_at"),
         "filename": _stored_or_default_document_filename(
             doc.get("filename"),
             doc["doc_type"],
