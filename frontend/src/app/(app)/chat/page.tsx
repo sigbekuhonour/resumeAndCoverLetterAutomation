@@ -3,6 +3,7 @@
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiJson, apiUpload } from "@/lib/api";
+import { storePendingChatMessage } from "@/lib/pending-chat";
 import { useApp } from "@/components/AppContext";
 import FileUpload from "@/components/FileUpload";
 
@@ -55,7 +56,8 @@ function ChatIndexContent() {
       }
 
       await refreshConversations();
-      router.push(`/chat/${conv.id}?initial=${encodeURIComponent(message)}`);
+      storePendingChatMessage(conv.id, message);
+      router.push(`/chat/${conv.id}`);
     } catch (err) {
       console.error("Failed to create conversation:", err);
       setSending(false);

@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   apiJson,
   apiUpload,
   handleTeamAccessRedirect,
   toApiError,
 } from "@/lib/api";
+import {
+  clearPendingChatMessage,
+  readPendingChatMessage,
+} from "@/lib/pending-chat";
 import { useApp } from "@/components/AppContext";
 import { createClient } from "@/lib/supabase/client";
 import ChatMessage from "@/components/ChatMessage";
@@ -98,9 +102,6 @@ function normalizeMessage(raw: unknown): Message | null {
 
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
-  const initialMessage = searchParams.get("initial");
-  const hasInitialMessage = Boolean(initialMessage);
   const { conversations, setActiveConversation, activeConversation } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -108,7 +109,9 @@ export default function ChatPage() {
   const [activitySteps, setActivitySteps] = useState<ActivityStep[]>([]);
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
   const [jobResults, setJobResults] = useState<JobResultEvent[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(() => !hasInitialMessage);
+  const [pendingInitialMessage, setPendingInitialMessage] = useState<string | null>(null);
+  const [initialMessageChecked, setInitialMessageChecked] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(true);
   const [attachError, setAttachError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -122,6 +125,12 @@ export default function ChatPage() {
     activityStepsRef.current = activitySteps;
   }, [activitySteps]);
 
+  useEffect(() => {
+    const pendingMessage = readPendingChatMessage(id);
+    setPendingInitialMessage(pendingMessage);
+    setInitialMessageChecked(true);
+  }, [id]);
+
   // Set active conversation in context
   useEffect(() => {
     const conv = conversations.find((c) => c.id === id);
@@ -131,12 +140,15 @@ export default function ChatPage() {
 
   // Load existing messages and documents (skip if auto-sending initial message)
   useEffect(() => {
+    if (!initialMessageChecked) {
+      return;
+    }
     if (skipNextHistoryLoadRef.current) {
       skipNextHistoryLoadRef.current = false;
       setLoadingMessages(false);
       return;
     }
-    if (hasInitialMessage) {
+    if (pendingInitialMessage) {
       // Brand-new conversation via redirect — no messages to fetch
       setLoadingMessages(false);
       return;
@@ -153,7 +165,7 @@ export default function ChatPage() {
       })
       .catch(console.error)
       .finally(() => setLoadingMessages(false));
-  }, [id, hasInitialMessage]);
+  }, [id, initialMessageChecked, pendingInitialMessage]);
 
   // Core send logic — accepts message directly, no dependency on input state
   const doSend = useCallback(async (userMsg: string, attachmentFileIds: string[] = []) => {
@@ -340,15 +352,17 @@ export default function ChatPage() {
 
   // Auto-send initial message from landing page / new chat
   useEffect(() => {
-    if (initialMessage && !initialSent.current && !loadingMessages) {
+    if (pendingInitialMessage && !initialSent.current && !loadingMessages) {
       initialSent.current = true;
       skipNextHistoryLoadRef.current = true;
-      window.history.replaceState({}, "", `/chat/${id}`);
-      doSend(initialMessage);
+      clearPendingChatMessage(id);
+      setPendingInitialMessage(null);
+      doSend(pendingInitialMessage);
     }
-  }, [initialMessage, loadingMessages, id, doSend]);
+  }, [pendingInitialMessage, loadingMessages, id, doSend]);
 
-  const isAwaitingInitialMessage = hasInitialMessage && !initialSent.current && messages.length === 0;
+  const isAwaitingInitialMessage =
+    pendingInitialMessage && !initialSent.current && messages.length === 0;
   const showCenteredLoader = loadingMessages && messages.length === 0 && !isAwaitingInitialMessage;
   const showEmptyState = !loadingMessages && messages.length === 0 && !isAwaitingInitialMessage;
   const hasStreamingAssistant = streaming && messages[messages.length - 1]?.role === "assistant";
