@@ -138,8 +138,6 @@ export default function ChatPage() {
     return () => setActiveConversation(null);
   }, [id, conversations, setActiveConversation]);
 
-  const conversationReadyForSend = activeConversation?.id === id;
-
   // Load existing messages and documents (skip if auto-sending initial message)
   useEffect(() => {
     if (!initialMessageChecked) {
@@ -365,7 +363,6 @@ export default function ChatPage() {
   useEffect(() => {
     if (
       pendingInitialMessage &&
-      conversationReadyForSend &&
       !initialSent.current &&
       !loadingMessages
     ) {
@@ -379,7 +376,7 @@ export default function ChatPage() {
       }, 50);
       return () => window.clearTimeout(timeoutId);
     }
-  }, [pendingInitialMessage, conversationReadyForSend, loadingMessages, id, doSend]);
+  }, [pendingInitialMessage, loadingMessages, id, doSend]);
 
   const isAwaitingInitialMessage =
     pendingInitialMessage && !initialSent.current && messages.length === 0;
