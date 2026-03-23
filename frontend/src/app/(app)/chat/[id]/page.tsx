@@ -371,10 +371,7 @@ export default function ChatPage() {
       const messageToSend = pendingInitialMessage;
       clearPendingChatMessage(id);
       setPendingInitialMessage(null);
-      const timeoutId = window.setTimeout(() => {
-        void doSend(messageToSend);
-      }, 50);
-      return () => window.clearTimeout(timeoutId);
+      void doSend(messageToSend);
     }
   }, [pendingInitialMessage, loadingMessages, id, doSend]);
 
