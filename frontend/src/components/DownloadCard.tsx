@@ -7,14 +7,22 @@ interface DownloadCardProps {
   docType: string;
   documentId: string;
   filename: string;
+  variantLabel?: string | null;
 }
 
 export default function DownloadCard({
   docType,
   documentId,
   filename,
+  variantLabel,
 }: DownloadCardProps) {
   const label = docType === "resume" ? "Resume" : "Cover Letter";
+  const variantHint =
+    variantLabel === "ATS-safe"
+      ? "Best for recruiter systems and ATS."
+      : variantLabel === "Creative-safe"
+        ? "Best for design-forward applications."
+        : null;
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async () => {
@@ -43,8 +51,13 @@ export default function DownloadCard({
         />
       </svg>
       <div>
-        <p className="text-sm font-medium text-text-primary">{label} ready</p>
+        <p className="text-sm font-medium text-text-primary">
+          {variantLabel ? `${label} · ${variantLabel}` : `${label} ready`}
+        </p>
         <p className="max-w-[28rem] truncate text-xs text-text-tertiary">{filename}</p>
+        {variantHint && (
+          <p className="text-[11px] text-text-tertiary">{variantHint}</p>
+        )}
         <button
           type="button"
           onClick={handleDownload}

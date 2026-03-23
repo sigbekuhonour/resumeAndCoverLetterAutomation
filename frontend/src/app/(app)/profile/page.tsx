@@ -31,6 +31,10 @@ interface ProfileData {
     download_url: string;
     created_at: string;
     job_id: string;
+    theme_id?: string | null;
+    variant_key?: string | null;
+    variant_label?: string | null;
+    variant_group_id?: string | null;
   }>;
 }
 
@@ -613,7 +617,9 @@ export default function ProfilePage() {
                           : "Resume")}
                     </p>
                     <p className="text-[11px] text-text-tertiary">
-                      {doc.doc_type === "cover_letter" ? "Cover Letter" : "Resume"} ·{" "}
+                      {doc.doc_type === "cover_letter" ? "Cover Letter" : "Resume"}
+                      {doc.variant_label ? ` · ${doc.variant_label}` : ""}
+                      {" · "}
                       {new Date(doc.created_at).toLocaleDateString(undefined, {
                         month: "short",
                         day: "numeric",

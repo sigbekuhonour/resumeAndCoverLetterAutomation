@@ -31,13 +31,30 @@ def default_generated_document_filename(doc_type: str, created_at: datetime | No
     return f"{stem}-{date_part}.docx"
 
 
-def semantic_generated_document_filename(doc_type: str, sections: dict) -> str:
+def _variant_filename_segment(variant_key: str | None) -> str:
+    return {
+        "ats_safe": "ATS",
+        "creative_safe": "Creative",
+    }.get(str(variant_key or "").strip().lower(), "")
+
+
+def semantic_generated_document_filename(
+    doc_type: str,
+    sections: dict,
+    *,
+    variant_key: str | None = None,
+) -> str:
     name_segment = _filename_segment(sections.get("name"))
     role_segment = _filename_segment(sections.get("role") or sections.get("title"))
     company_segment = _filename_segment(sections.get("company"))
     doc_segment = "Cover-Letter" if doc_type == "cover_letter" else "Resume"
+    variant_segment = _variant_filename_segment(variant_key)
 
-    parts = [segment for segment in (name_segment, role_segment, company_segment, doc_segment) if segment]
+    parts = [
+        segment
+        for segment in (name_segment, role_segment, company_segment, doc_segment, variant_segment)
+        if segment
+    ]
     if len(parts) <= 1:
         return default_generated_document_filename(doc_type)
 

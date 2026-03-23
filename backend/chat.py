@@ -133,6 +133,8 @@ If you choose a design direction, do it by selecting an approved `theme_id` insi
 - `executive_clean` for leadership-oriented applications with a more formal, editorial hierarchy
 - `modern_minimal` for design-adjacent or portfolio-aware applications while staying ATS-safe
 
+For design-forward resume roles, if you choose `modern_minimal` or `creative_safe`, the backend may automatically produce both a Creative-safe and ATS-safe resume variant from the same content.
+
 You may also set `layout_strategy` in `sections` to one of:
 - `ats_safe`
 - `balanced`
@@ -501,17 +503,32 @@ def _generate_document_status_metadata(args: dict, result: dict | None, state: s
     meta = {"doc_type": doc_type}
 
     if state == "done" and result:
-        plan = result.get("document_plan") or {}
+        documents = _result_documents(result)
+        primary_result = documents[0] if documents else result
+        plan = primary_result.get("document_plan") or result.get("document_plan") or {}
         repair_history = plan.get("repair_history") or []
-        if repair_history:
+        variant_labels = [
+            str(document.get("variant_label"))
+            for document in documents
+            if document.get("variant_label")
+        ]
+        if len(documents) > 1:
+            if len(variant_labels) >= 2:
+                detail = f"{' and '.join(variant_labels[:2])} variants ready."
+            else:
+                detail = "Document variants ready."
+            meta["variant_count"] = len(documents)
+            if variant_labels:
+                meta["variant_labels"] = variant_labels
+        elif repair_history:
             detail = f"Adjusted layout to fit {result.get('page_budget', 1)} page."
             meta["repair_actions"] = [item.get("action") for item in repair_history]
         else:
             detail = f"{label.replace('Generating ', '').capitalize()} ready."
-        if result.get("theme_id"):
-            meta["theme_id"] = result["theme_id"]
-        if result.get("page_budget") is not None:
-            meta["page_budget"] = result["page_budget"]
+        if primary_result.get("theme_id"):
+            meta["theme_id"] = primary_result["theme_id"]
+        if primary_result.get("page_budget") is not None:
+            meta["page_budget"] = primary_result["page_budget"]
         verification = plan.get("verification") or {}
         if verification.get("status"):
             meta["verification_status"] = verification["status"]
@@ -610,6 +627,20 @@ def _tool_status_payload(
     )
 
 
+def _result_documents(result: dict | None) -> list[dict]:
+    if not isinstance(result, dict):
+        return []
+    documents = result.get("documents")
+    if isinstance(documents, list):
+        return [
+            item for item in documents
+            if isinstance(item, dict) and item.get("document_id")
+        ]
+    if result.get("document_id"):
+        return [result]
+    return []
+
+
 def _tool_run_summary(executed_tools: list[dict]) -> str:
     lines: list[str] = []
     for item in executed_tools:
@@ -617,10 +648,21 @@ def _tool_run_summary(executed_tools: list[dict]) -> str:
         state = item.get("state", "done")
         result = item.get("result")
         if name == "generate_document" and isinstance(result, dict):
+            documents = _result_documents(result)
             filename = result.get("filename")
             doc_type = str(result.get("doc_type", "document")).replace("_", " ")
             if state == "failed":
                 detail = result.get("error", "generation failed")
+            elif len(documents) > 1:
+                labels = [
+                    str(document.get("variant_label"))
+                    for document in documents
+                    if document.get("variant_label")
+                ]
+                if labels:
+                    detail = f"created {doc_type} variants {' and '.join(labels)}"
+                else:
+                    detail = f"created {len(documents)} {doc_type} variants"
             elif filename:
                 detail = f"created {doc_type} file {filename}"
             else:
@@ -644,11 +686,12 @@ def _tool_run_summary(executed_tools: list[dict]) -> str:
 
 def _deterministic_tool_only_fallback(executed_tools: list[dict]) -> str:
     successful_documents = [
-        item for item in executed_tools
+        document
+        for item in executed_tools
         if item.get("name") == "generate_document"
         and item.get("state") == "done"
         and isinstance(item.get("result"), dict)
-        and item["result"].get("document_id")
+        for document in _result_documents(item.get("result"))
     ]
     failed_documents = [
         item for item in executed_tools
@@ -657,11 +700,22 @@ def _deterministic_tool_only_fallback(executed_tools: list[dict]) -> str:
     ]
 
     if successful_documents:
-        doc_labels = [
-            str(item["result"].get("doc_type", "document")).replace("_", " ")
-            for item in successful_documents
+        resume_variants = [
+            str(document.get("variant_label"))
+            for document in successful_documents
+            if document.get("doc_type") == "resume" and document.get("variant_label")
         ]
-        if len(doc_labels) == 2 and sorted(doc_labels) == ["cover letter", "resume"]:
+        doc_labels = [
+            str(document.get("doc_type", "document")).replace("_", " ")
+            for document in successful_documents
+        ]
+        has_cover_letter = "cover letter" in doc_labels
+        has_resume = "resume" in doc_labels
+        if len(resume_variants) >= 2 and has_cover_letter:
+            return "Your ATS-safe and Creative-safe resumes plus your cover letter are ready. The download cards are below. If you want revisions, tell me what to change."
+        if len(resume_variants) >= 2:
+            return "Your ATS-safe and Creative-safe resumes are ready. The download cards are below. If you want revisions, tell me what to change."
+        if has_cover_letter and has_resume:
             return "Your resume and cover letter are ready. The download cards are below. If you want any revisions, tell me what to change."
         if len(doc_labels) == 1:
             return f"Your {doc_labels[0]} is ready. The download card is below. If you want revisions, tell me what to change."
@@ -1010,12 +1064,13 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
                     yield ServerSentEvent(data=json.dumps(completed_status), event="status")
                     await asyncio.sleep(0)
 
-                    if fc.name == "generate_document" and "document_id" in result:
-                        yield ServerSentEvent(
-                            data=json.dumps(result),
-                            event="document",
-                        )
-                        await asyncio.sleep(0)
+                    if fc.name == "generate_document":
+                        for document in _result_documents(result if isinstance(result, dict) else None):
+                            yield ServerSentEvent(
+                                data=json.dumps(document),
+                                event="document",
+                            )
+                            await asyncio.sleep(0)
 
                     # Emit job_result events for present_job_results
                     if fc.name == "present_job_results":

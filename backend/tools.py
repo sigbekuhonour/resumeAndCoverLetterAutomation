@@ -3,7 +3,7 @@ import logging
 import uuid
 import json
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 from tavily import TavilyClient
 from firecrawl import Firecrawl
 from config import settings
@@ -26,6 +26,10 @@ tavily_client = TavilyClient(api_key=settings.tavily_api_key)
 firecrawl_client = Firecrawl(api_key=settings.firecrawl_api_key)
 
 DocumentProgressCallback = Callable[[dict], None]
+VARIANT_LABELS = {
+    "ats_safe": "ATS-safe",
+    "creative_safe": "Creative-safe",
+}
 
 def _canonicalize_for_merge(value):
     if isinstance(value, dict):
@@ -170,13 +174,84 @@ def _summarize_repair_actions(repair_history: list[dict]) -> str:
     return f"{actions[0].capitalize()}, {actions[1]}, and more."
 
 
+def _variant_label(variant_key: str | None) -> str | None:
+    return VARIANT_LABELS.get(str(variant_key or "").strip().lower())
+
+
+def _is_dual_variant_resume_plan(doc_type: str, plan) -> bool:
+    return doc_type == "resume" and getattr(plan, "theme_id", "") == "modern_minimal"
+
+
+def _build_document_variants(doc_type: str, sections: dict) -> list[dict[str, Any]]:
+    primary_plan = build_document_plan(doc_type, sections)
+    variants: list[dict[str, Any]] = [
+        {
+            "plan": primary_plan,
+            "variant_key": None,
+            "variant_label": None,
+        }
+    ]
+
+    if not _is_dual_variant_resume_plan(doc_type, primary_plan):
+        return variants
+
+    alternate_sections = dict(primary_plan.normalized_sections)
+    alternate_sections.pop("theme_id", None)
+    alternate_sections["layout_strategy"] = "ats_safe"
+    alternate_plan = build_document_plan(doc_type, alternate_sections)
+    if alternate_plan.theme_id == primary_plan.theme_id:
+        return variants
+
+    variants[0]["variant_key"] = "creative_safe"
+    variants[0]["variant_label"] = _variant_label("creative_safe")
+    variants.append(
+        {
+            "plan": alternate_plan,
+            "variant_key": "ats_safe",
+            "variant_label": _variant_label("ats_safe"),
+        }
+    )
+    return variants
+
+
+def _document_variant_summary(variants: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    labels = [
+        variant["variant_label"]
+        for variant in variants
+        if variant.get("variant_label")
+    ]
+    primary_plan = variants[0]["plan"]
+    meta = {
+        "theme_id": primary_plan.theme_id,
+        "density": primary_plan.density,
+        "attempt_count": primary_plan.attempt_count,
+        "variant_count": len(variants),
+    }
+    if labels:
+        meta["variant_labels"] = labels
+    if len(labels) >= 2:
+        return (
+            f"Prepared {', '.join(labels[:-1])} and {labels[-1]} variants.",
+            meta,
+        )
+    return (
+        f"Selected {primary_plan.theme_id.replace('_', ' ')} theme.",
+        meta,
+    )
+
+
 def _resolve_generated_document_filename(
     *,
     doc_type: str,
     sections: dict,
     user_id: str,
+    variant_key: str | None = None,
 ) -> str:
-    base_filename = semantic_generated_document_filename(doc_type, sections)
+    base_filename = semantic_generated_document_filename(
+        doc_type,
+        sections,
+        variant_key=variant_key,
+    )
     try:
         existing = (
             supabase.table("generated_documents")
@@ -207,28 +282,21 @@ def _generate_document_sync(
     logger.info("generate_document type=%s job_id=%s", doc_type, job_id[:8])
     active_phase = "plan"
     generated_at = datetime.now(timezone.utc)
-    filename = _resolve_generated_document_filename(
-        doc_type=doc_type,
-        sections=sections,
-        user_id=user_id,
-    )
     try:
         _emit_document_progress(
             progress_callback,
             phase="plan",
             state="running",
         )
-        plan = build_document_plan(doc_type, sections)
+        variants = _build_document_variants(doc_type, sections)
+        plan = variants[0]["plan"]
+        plan_detail, plan_meta = _document_variant_summary(variants)
         _emit_document_progress(
             progress_callback,
             phase="plan",
             state="done",
-            detail=f"Selected {plan.theme_id.replace('_', ' ')} theme.",
-            meta={
-                "theme_id": plan.theme_id,
-                "density": plan.density,
-                "attempt_count": plan.attempt_count,
-            },
+            detail=plan_detail,
+            meta=plan_meta,
         )
         if plan.repair_history:
             _emit_document_progress(
@@ -264,60 +332,115 @@ def _generate_document_sync(
             progress_callback,
             phase="render",
             state="running",
+            detail=(
+                "Building resume variants."
+                if len(variants) > 1
+                else None
+            ),
         )
         active_phase = "render"
-        document_bytes = render_document(plan)
+        rendered_documents: list[dict[str, Any]] = []
+        for variant in variants:
+            rendered_documents.append(
+                {
+                    **variant,
+                    "document_bytes": render_document(variant["plan"]),
+                }
+            )
         _emit_document_progress(
             progress_callback,
             phase="render",
             state="done",
-            detail="Built the DOCX document.",
+            detail=(
+                f"Built {len(rendered_documents)} DOCX resume variants."
+                if len(rendered_documents) > 1
+                else "Built the DOCX document."
+            ),
         )
-
-        doc_id = str(uuid.uuid4())
-        storage_path = f"{user_id}/{doc_id}.docx"
 
         _emit_document_progress(
             progress_callback,
             phase="save",
             state="running",
+            detail=(
+                "Saving both resume variants."
+                if len(rendered_documents) > 1
+                else None
+            ),
         )
         active_phase = "save"
-        supabase.storage.from_("documents").upload(
-            path=storage_path,
-            file=document_bytes,
-            file_options={"content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
-        )
+        variant_group_id = str(uuid.uuid4()) if len(rendered_documents) > 1 else None
+        saved_documents: list[dict[str, Any]] = []
+        for rendered in rendered_documents:
+            variant_key = rendered.get("variant_key")
+            variant_label = rendered.get("variant_label")
+            variant_plan = rendered["plan"]
+            filename = _resolve_generated_document_filename(
+                doc_type=doc_type,
+                sections=sections,
+                user_id=user_id,
+                variant_key=variant_key,
+            )
+            doc_id = str(uuid.uuid4())
+            storage_path = f"{user_id}/{doc_id}.docx"
 
-        signed_url = supabase.storage.from_("documents").create_signed_url(
-            storage_path, 3600
-        )
+            supabase.storage.from_("documents").upload(
+                path=storage_path,
+                file=rendered["document_bytes"],
+                file_options={"content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+            )
 
-        # Save document record
-        supabase.table("generated_documents").insert({
-            "id": doc_id,
-            "job_id": job_id,
-            "user_id": user_id,
-            "doc_type": doc_type,
-            "filename": filename,
-            "file_url": storage_path,
-        }).execute()
+            signed_url = supabase.storage.from_("documents").create_signed_url(
+                storage_path, 3600
+            )
+
+            supabase.table("generated_documents").insert({
+                "id": doc_id,
+                "job_id": job_id,
+                "user_id": user_id,
+                "doc_type": doc_type,
+                "filename": filename,
+                "file_url": storage_path,
+                "theme_id": variant_plan.theme_id,
+                "variant_key": variant_key,
+                "variant_label": variant_label,
+                "variant_group_id": variant_group_id,
+            }).execute()
+            saved_documents.append(
+                {
+                    "document_id": doc_id,
+                    "doc_type": doc_type,
+                    "filename": filename or default_generated_document_filename(doc_type, generated_at),
+                    "download_url": signed_url.get("signedURL", ""),
+                    "theme_id": variant_plan.theme_id,
+                    "page_budget": variant_plan.page_budget,
+                    "document_plan": serialize_document_plan(variant_plan),
+                    "variant_key": variant_key,
+                    "variant_label": variant_label,
+                    "variant_group_id": variant_group_id,
+                }
+            )
         _emit_document_progress(
             progress_callback,
             phase="save",
             state="done",
-            detail="Stored the document and generated a download link.",
+            detail=(
+                "Stored both variants and generated download links."
+                if len(saved_documents) > 1
+                else "Stored the document and generated a download link."
+            ),
         )
 
-        logger.info("generate_document success doc_id=%s", doc_id[:8])
+        primary_document = saved_documents[0]
+        logger.info(
+            "generate_document success doc_id=%s count=%d",
+            primary_document["document_id"][:8],
+            len(saved_documents),
+        )
         return {
-            "document_id": doc_id,
-            "doc_type": doc_type,
-            "filename": filename or default_generated_document_filename(doc_type, generated_at),
-            "download_url": signed_url.get("signedURL", ""),
-            "theme_id": plan.theme_id,
-            "page_budget": plan.page_budget,
-            "document_plan": serialize_document_plan(plan),
+            **primary_document,
+            "documents": saved_documents,
+            "variant_count": len(saved_documents),
         }
     except Exception as e:
         logger.error("generate_document failed: %s", e)

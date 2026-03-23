@@ -148,6 +148,20 @@ def test_semantic_generated_document_filename_uses_name_role_company():
     assert filename == "Aham-Sel-Backend-Engineer-Fresha-Resume.docx"
 
 
+def test_semantic_generated_document_filename_appends_variant_suffix():
+    filename = document_filenames.semantic_generated_document_filename(
+        "resume",
+        {
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+        },
+        variant_key="creative_safe",
+    )
+
+    assert filename == "Jordan-Vale-Product-Designer-North-Coast-Resume-Creative.docx"
+
+
 def test_next_versioned_filename_increments_existing_versions():
     filename = document_filenames.next_versioned_filename(
         "Aham-Sel-Backend-Engineer-Fresha-Resume.docx",
@@ -279,6 +293,7 @@ def test_generate_document_sync_emits_progress_events(monkeypatch):
         ("save", "running"),
         ("save", "done"),
     ]
+    assert result["variant_count"] == 1
     assert result["theme_id"] == "technical_compact"
     assert result["page_budget"] == 1
     assert result["filename"] == "Avery-Carter-Backend-Engineer-Boam-AI-Resume-v2.docx"
@@ -288,6 +303,97 @@ def test_generate_document_sync_emits_progress_events(monkeypatch):
         and payload["filename"] == "Avery-Carter-Backend-Engineer-Boam-AI-Resume-v2.docx"
         for event_name, payload in dummy_supabase.events
     )
+
+
+def test_generate_document_sync_emits_dual_resume_variants_for_design_roles(monkeypatch):
+    dummy_supabase = _DummySupabase()
+    progress_events: list[dict] = []
+    creative_plan = DocumentPlan(
+        doc_type="resume",
+        page_budget=1,
+        theme_id="modern_minimal",
+        density="balanced",
+        normalized_sections={
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+            "summary": "Product designer focused on systems and interaction design.",
+            "skills": "Design: Figma, Systems",
+            "experiences": [],
+            "education": "BDes Interaction Design",
+        },
+        section_order=["summary", "experience", "skills", "education"],
+        layout_metrics={"bullet_count": 0},
+        verification={"status": "passed", "issues": []},
+        repair_history=[],
+        attempt_count=1,
+    )
+    ats_plan = DocumentPlan(
+        doc_type="resume",
+        page_budget=1,
+        theme_id="ats_minimal",
+        density="balanced",
+        normalized_sections={
+            **creative_plan.normalized_sections,
+            "layout_strategy": "ats_safe",
+        },
+        section_order=["summary", "experience", "skills", "education"],
+        layout_metrics={"bullet_count": 0},
+        verification={"status": "passed", "issues": []},
+        repair_history=[],
+        attempt_count=1,
+    )
+
+    def _build_plan(doc_type, sections):
+        if sections.get("layout_strategy") == "ats_safe":
+            return ats_plan
+        return creative_plan
+
+    monkeypatch.setattr(tools, "supabase", dummy_supabase)
+    monkeypatch.setattr(tools, "build_document_plan", _build_plan)
+    monkeypatch.setattr(
+        tools,
+        "render_document",
+        lambda built_plan: f"docx-{built_plan.theme_id}".encode(),
+    )
+    monkeypatch.setattr(
+        tools,
+        "serialize_document_plan",
+        lambda built_plan: {
+            "theme_id": built_plan.theme_id,
+            "verification": built_plan.verification,
+        },
+    )
+
+    result = tools._generate_document_sync(
+        "resume",
+        {
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+        },
+        "user-1",
+        "job-1",
+        progress_callback=progress_events.append,
+    )
+
+    assert result["variant_count"] == 2
+    assert [doc["variant_label"] for doc in result["documents"]] == [
+        "Creative-safe",
+        "ATS-safe",
+    ]
+    assert [doc["theme_id"] for doc in result["documents"]] == [
+        "modern_minimal",
+        "ats_minimal",
+    ]
+    assert [doc["filename"] for doc in result["documents"]] == [
+        "Jordan-Vale-Product-Designer-North-Coast-Resume-Creative.docx",
+        "Jordan-Vale-Product-Designer-North-Coast-Resume-ATS.docx",
+    ]
+    assert result["variant_group_id"] == result["documents"][0]["variant_group_id"]
+    assert result["variant_group_id"] == result["documents"][1]["variant_group_id"]
+    assert progress_events[1]["detail"] == "Prepared Creative-safe and ATS-safe variants."
+    assert progress_events[-1]["detail"] == "Stored both variants and generated download links."
 
 
 def test_generate_document_sync_marks_render_failures(monkeypatch):

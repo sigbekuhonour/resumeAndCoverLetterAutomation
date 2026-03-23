@@ -174,7 +174,7 @@ async def get_profile(user_id: str = Depends(get_current_user)):
     # Generated documents
     docs = (
         supabase.table("generated_documents")
-        .select("id, job_id, doc_type, filename, file_url, created_at")
+        .select("id, job_id, doc_type, filename, file_url, created_at, theme_id, variant_key, variant_label, variant_group_id")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
@@ -347,8 +347,9 @@ async def get_conversation(
         for job_id in job_ids:
             doc_results = (
                 supabase.table("generated_documents")
-                .select("id, doc_type, filename, file_url, created_at")
+                .select("id, doc_type, filename, file_url, created_at, theme_id, variant_key, variant_label, variant_group_id")
                 .eq("job_id", job_id)
+                .order("created_at")
                 .execute()
             )
             for doc in doc_results.data:
@@ -364,6 +365,10 @@ async def get_conversation(
                         doc.get("created_at"),
                     ),
                     "download_url": signed.get("signedURL", ""),
+                    "theme_id": doc.get("theme_id"),
+                    "variant_key": doc.get("variant_key"),
+                    "variant_label": doc.get("variant_label"),
+                    "variant_group_id": doc.get("variant_group_id"),
                 })
 
     return {**conv.data, "messages": messages.data, "documents": docs}

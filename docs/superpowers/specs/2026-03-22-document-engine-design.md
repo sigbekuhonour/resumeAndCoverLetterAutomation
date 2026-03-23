@@ -156,6 +156,7 @@ Implemented now:
 - deterministic ATS-safe selection for simplicity-first roles and workflows
 - theme-specific rendering differences that stay within safe flow-layout primitives
 - deterministic design-role selection for visually stronger but still ATS-safe documents
+- dual-output resume variants for design-forward roles when the creative-safe and ATS-safe renders meaningfully differ
 
 Not implemented yet:
 
@@ -262,6 +263,16 @@ When the exact theme should remain engine-controlled, the model can choose a
 
 The engine then resolves the concrete theme deterministically within that
 strategy.
+
+For design-forward resume roles, the backend may emit two audited outputs from
+the same generation request:
+
+- `Creative-safe`
+- `ATS-safe`
+
+This is a backend decision, not an up-front user choice. The intended UX is to
+show both download cards inline after generation so the user can pick the right
+submission variant without managing theme settings first.
 
 ## Stage 3: Composition
 

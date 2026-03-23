@@ -29,6 +29,9 @@ interface DocumentEvent {
   filename?: string;
   download_url: string;
   theme_id?: string;
+  variant_key?: string | null;
+  variant_label?: string | null;
+  variant_group_id?: string | null;
   page_budget?: number;
   document_plan?: {
     repair_history?: Array<{ action?: string }>;
@@ -448,6 +451,7 @@ export default function ChatPage() {
               docType={d.doc_type}
               documentId={d.document_id}
               filename={d.filename || `${d.doc_type === "cover_letter" ? "cover-letter" : "resume"}.docx`}
+              variantLabel={d.variant_label}
             />
           ))}
           <div ref={bottomRef} />

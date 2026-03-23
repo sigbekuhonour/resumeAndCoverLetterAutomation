@@ -139,6 +139,45 @@ def test_deterministic_tool_only_fallback_for_generated_documents():
     )
 
 
+def test_deterministic_tool_only_fallback_for_resume_variants_and_cover_letter():
+    text = chat._deterministic_tool_only_fallback([
+        {
+            "name": "generate_document",
+            "state": "done",
+            "result": {
+                "documents": [
+                    {
+                        "document_id": "resume-creative",
+                        "doc_type": "resume",
+                        "filename": "Jordan-Vale-Resume-Creative.docx",
+                        "variant_label": "Creative-safe",
+                    },
+                    {
+                        "document_id": "resume-ats",
+                        "doc_type": "resume",
+                        "filename": "Jordan-Vale-Resume-ATS.docx",
+                        "variant_label": "ATS-safe",
+                    },
+                ],
+            },
+        },
+        {
+            "name": "generate_document",
+            "state": "done",
+            "result": {
+                "document_id": "cover-doc",
+                "doc_type": "cover_letter",
+                "filename": "Jordan-Vale-Cover-Letter.docx",
+            },
+        },
+    ])
+
+    assert text == (
+        "Your ATS-safe and Creative-safe resumes plus your cover letter are ready. "
+        "The download cards are below. If you want revisions, tell me what to change."
+    )
+
+
 def test_generate_tool_only_followup_text_uses_model_reply(monkeypatch):
     captured = {}
 
