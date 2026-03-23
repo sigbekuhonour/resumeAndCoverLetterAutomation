@@ -46,3 +46,37 @@ def test_done_status_payload_omits_stream_padding():
 
     assert payload["state"] == "done"
     assert "_stream_padding" not in payload
+
+
+def test_upsert_activity_trace_replaces_existing_step_without_padding():
+    trace: list[dict] = []
+
+    chat._upsert_activity_trace(
+        trace,
+        chat._status_payload(
+            step_id="read_job_posting",
+            phase="read_job_posting",
+            label="Reading job posting",
+            state="running",
+        ),
+    )
+    chat._upsert_activity_trace(
+        trace,
+        chat._status_payload(
+            step_id="read_job_posting",
+            phase="read_job_posting",
+            label="Reading job posting",
+            state="done",
+            detail="Captured the job description.",
+        ),
+    )
+
+    assert trace == [
+        {
+            "id": "read_job_posting",
+            "phase": "read_job_posting",
+            "label": "Reading job posting",
+            "state": "done",
+            "detail": "Captured the job description.",
+        }
+    ]

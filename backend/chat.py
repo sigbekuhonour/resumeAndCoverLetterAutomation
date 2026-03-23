@@ -440,6 +440,21 @@ def _status_payload(
     return payload
 
 
+def _persisted_activity_step(payload: dict) -> dict:
+    persisted = dict(payload)
+    persisted.pop("_stream_padding", None)
+    return persisted
+
+
+def _upsert_activity_trace(trace: list[dict], payload: dict) -> None:
+    persisted = _persisted_activity_step(payload)
+    for index, existing in enumerate(trace):
+        if existing.get("id") == persisted.get("id"):
+            trace[index] = persisted
+            return
+    trace.append(persisted)
+
+
 def _router_status_payload(router: dict, state: str) -> dict:
     detail = None
     if state == "done":
@@ -629,17 +644,15 @@ async def stream_chat(
     is_first_exchange = len(history) == 0
     context_prompt = _build_context_prompt(user_id)
 
-    yield ServerSentEvent(
-        data=json.dumps(
-            _status_payload(
-                step_id="understanding_request",
-                phase="understanding_request",
-                label="Understanding request",
-                state="running",
-            )
-        ),
-        event="status",
+    activity_trace: list[dict] = []
+    initial_status = _status_payload(
+        step_id="understanding_request",
+        phase="understanding_request",
+        label="Understanding request",
+        state="running",
     )
+    _upsert_activity_trace(activity_trace, initial_status)
+    yield ServerSentEvent(data=json.dumps(initial_status), event="status")
     await asyncio.sleep(0)
     router = await asyncio.to_thread(
         _analyze_turn,
@@ -649,10 +662,9 @@ async def stream_chat(
         history=history,
     )
 
-    yield ServerSentEvent(
-        data=json.dumps(_router_status_payload(router, "done")),
-        event="status",
-    )
+    router_done_status = _router_status_payload(router, "done")
+    _upsert_activity_trace(activity_trace, router_done_status)
+    yield ServerSentEvent(data=json.dumps(router_done_status), event="status")
     await asyncio.sleep(0)
 
     supabase.table("messages").insert({
@@ -752,32 +764,26 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
                     fc = part.function_call
                     function_call_content = chunk.candidates[0].content
 
-                    yield ServerSentEvent(
-                        data=json.dumps(
-                            _tool_status_payload(
-                                name=fc.name,
-                                args=dict(fc.args) if fc.args else {},
-                                state="running",
-                            )
-                        ),
-                        event="status",
+                    running_status = _tool_status_payload(
+                        name=fc.name,
+                        args=dict(fc.args) if fc.args else {},
+                        state="running",
                     )
+                    _upsert_activity_trace(activity_trace, running_status)
+                    yield ServerSentEvent(data=json.dumps(running_status), event="status")
                     await asyncio.sleep(0)
 
                     result, job_id = await _execute_tool(fc, user_id, conversation_id, job_id)
                     tool_state = "failed" if isinstance(result, dict) and "error" in result else "done"
 
-                    yield ServerSentEvent(
-                        data=json.dumps(
-                            _tool_status_payload(
-                                name=fc.name,
-                                args=dict(fc.args) if fc.args else {},
-                                state=tool_state,
-                                result=result,
-                            )
-                        ),
-                        event="status",
+                    completed_status = _tool_status_payload(
+                        name=fc.name,
+                        args=dict(fc.args) if fc.args else {},
+                        state=tool_state,
+                        result=result,
                     )
+                    _upsert_activity_trace(activity_trace, completed_status)
+                    yield ServerSentEvent(data=json.dumps(completed_status), event="status")
                     await asyncio.sleep(0)
 
                     if fc.name == "generate_document" and "document_id" in result:
@@ -827,6 +833,9 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
             "conversation_id": conversation_id,
             "role": "assistant",
             "content": full_response,
+            "metadata": {
+                "activity_trace": activity_trace,
+            },
         }).execute()
 
         # Auto-title: update conversation title from first user message if still default

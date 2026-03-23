@@ -18,6 +18,9 @@ import JobCard from "@/components/JobCard";
 interface Message {
   role: "user" | "assistant";
   content: string;
+  metadata?: {
+    activity_trace?: ActivityStep[];
+  };
 }
 
 interface DocumentEvent {
@@ -45,6 +48,44 @@ interface UploadResponse {
   file_id: string;
 }
 
+function normalizeActivityStep(raw: unknown): ActivityStep | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const step = raw as Record<string, unknown>;
+  const state =
+    step.state === "done" || step.state === "failed" ? step.state : "running";
+
+  return {
+    id: String(step.id || step.phase || step.tool || crypto.randomUUID()),
+    phase: String(step.phase || step.tool || "activity"),
+    label: String(step.label || step.tool || "Working"),
+    state,
+    tool: typeof step.tool === "string" ? step.tool : undefined,
+    detail: typeof step.detail === "string" ? step.detail : undefined,
+    meta:
+      step.meta && typeof step.meta === "object" && !Array.isArray(step.meta)
+        ? (step.meta as Record<string, unknown>)
+        : undefined,
+  };
+}
+
+function normalizeMessage(raw: unknown): Message | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const message = raw as Record<string, unknown>;
+  if (message.role !== "user" && message.role !== "assistant") return null;
+
+  const activityTrace = Array.isArray((message.metadata as Record<string, unknown> | undefined)?.activity_trace)
+    ? ((message.metadata as Record<string, unknown>).activity_trace as unknown[])
+        .map(normalizeActivityStep)
+        .filter((step): step is ActivityStep => Boolean(step))
+    : undefined;
+
+  return {
+    role: message.role,
+    content: typeof message.content === "string" ? message.content : "",
+    metadata: activityTrace ? { activity_trace: activityTrace } : undefined,
+  };
+}
+
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -64,6 +105,11 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialSent = useRef(false);
   const streamingRef = useRef(false);
+  const activityStepsRef = useRef<ActivityStep[]>([]);
+
+  useEffect(() => {
+    activityStepsRef.current = activitySteps;
+  }, [activitySteps]);
 
   // Set active conversation in context
   useEffect(() => {
@@ -80,9 +126,13 @@ export default function ChatPage() {
       return;
     }
     setLoadingMessages(true);
-    apiJson<{ messages: Message[]; documents?: DocumentEvent[] }>(`/conversations/${id}`)
+    apiJson<{ messages: unknown[]; documents?: DocumentEvent[] }>(`/conversations/${id}`)
       .then((data) => {
-        setMessages(data.messages || []);
+        setMessages(
+          (data.messages || [])
+            .map(normalizeMessage)
+            .filter((message): message is Message => Boolean(message))
+        );
         setDocuments(data.documents || []);
       })
       .catch(console.error)
@@ -163,25 +213,18 @@ export default function ChatPage() {
                     const updated = [...prev];
                     const lastIdx = updated.length - 1;
                     if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                      updated[lastIdx] = { ...updated[lastIdx], content: assistantContent };
+                      updated[lastIdx] = {
+                        ...updated[lastIdx],
+                        content: assistantContent,
+                      };
                     } else {
                       updated.push({ role: "assistant", content: assistantContent });
                     }
                     return updated;
                   });
                 } else if (eventType === "status") {
-                  const nextStep: ActivityStep = {
-                    id: String(data.id || data.phase || data.tool || crypto.randomUUID()),
-                    phase: String(data.phase || data.tool || "activity"),
-                    label: String(data.label || data.tool || "Working"),
-                    state: data.state === "done" || data.state === "failed" ? data.state : "running",
-                    tool: typeof data.tool === "string" ? data.tool : undefined,
-                    detail: typeof data.detail === "string" ? data.detail : undefined,
-                    meta:
-                      data.meta && typeof data.meta === "object" && !Array.isArray(data.meta)
-                        ? (data.meta as Record<string, unknown>)
-                        : undefined,
-                  };
+                  const nextStep = normalizeActivityStep(data);
+                  if (!nextStep) continue;
                   setActivitySteps((prev) => {
                     const existing = prev.findIndex((s) => s.id === nextStep.id);
                     if (existing >= 0) {
@@ -211,8 +254,30 @@ export default function ChatPage() {
     } catch (err) {
       console.error("Stream error:", err);
     } finally {
+      const finalTrace = activityStepsRef.current;
+      if (finalTrace.length > 0) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastAssistantIndex = [...updated]
+            .map((message, index) => ({ message, index }))
+            .reverse()
+            .find(({ message }) => message.role === "assistant")?.index;
+
+          if (lastAssistantIndex === undefined) return updated;
+
+          updated[lastAssistantIndex] = {
+            ...updated[lastAssistantIndex],
+            metadata: {
+              ...updated[lastAssistantIndex].metadata,
+              activity_trace: finalTrace,
+            },
+          };
+          return updated;
+        });
+      }
       setStreaming(false);
       streamingRef.current = false;
+      setActivitySteps([]);
     }
   }, [id]);
 
@@ -246,6 +311,7 @@ export default function ChatPage() {
   const isAwaitingInitialMessage = hasInitialMessage && !initialSent.current && messages.length === 0;
   const showCenteredLoader = loadingMessages && messages.length === 0 && !isAwaitingInitialMessage;
   const showEmptyState = !loadingMessages && messages.length === 0 && !isAwaitingInitialMessage;
+  const hasStreamingAssistant = streaming && messages[messages.length - 1]?.role === "assistant";
 
   // Auto-scroll
   useEffect(() => {
@@ -302,10 +368,28 @@ export default function ChatPage() {
           </div>
         )}
         <div className="max-w-3xl mx-auto">
-          {messages.map((msg, i) => (
-            <ChatMessage key={i} role={msg.role} content={msg.content} />
-          ))}
-          <ActivityTimeline steps={activitySteps} />
+          {messages.map((msg, i) => {
+            const persistedTrace = msg.metadata?.activity_trace || [];
+            const isStreamingAssistantMessage =
+              streaming && i === messages.length - 1 && msg.role === "assistant";
+            const traceToRender = isStreamingAssistantMessage ? activitySteps : persistedTrace;
+            const showTrace = traceToRender.length > 0;
+
+            return (
+              <div key={i}>
+                <ChatMessage role={msg.role} content={msg.content} />
+                {msg.role === "assistant" && showTrace && (
+                  <ActivityTimeline
+                    steps={traceToRender}
+                    defaultExpanded={isStreamingAssistantMessage}
+                  />
+                )}
+              </div>
+            );
+          })}
+          {!hasStreamingAssistant && streaming && activitySteps.length > 0 && (
+            <ActivityTimeline steps={activitySteps} defaultExpanded />
+          )}
           {jobResults.map((j, i) => (
             <JobCard
               key={`job-${i}`}
