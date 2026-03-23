@@ -197,63 +197,86 @@ export default function ChatPage() {
       let assistantContent = "";
       let buffer = "";
 
+      const handleSseEvent = (eventType: string, data: unknown) => {
+        if (eventType === "message") {
+          const chunk =
+            typeof (data as { content?: unknown } | null)?.content === "string"
+              ? (data as { content: string }).content
+              : "";
+          if (!chunk) return;
+          assistantContent += chunk;
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: assistantContent,
+              };
+            } else {
+              updated.push({ role: "assistant", content: assistantContent });
+            }
+            return updated;
+          });
+        } else if (eventType === "status") {
+          const nextStep = normalizeActivityStep(data);
+          if (!nextStep) return;
+          setActivitySteps((prev) => {
+            const existing = prev.findIndex((s) => s.id === nextStep.id);
+            if (existing >= 0) {
+              const updated = [...prev];
+              updated[existing] = nextStep;
+              return updated;
+            }
+            return [...prev, nextStep];
+          });
+        } else if (eventType === "document") {
+          setDocuments((prev) => [...prev, data as DocumentEvent]);
+        } else if (eventType === "job_result") {
+          setJobResults((prev) => [...prev, data as JobResultEvent]);
+        } else if (eventType === "error") {
+          const message =
+            typeof (data as { message?: unknown } | null)?.message === "string"
+              ? (data as { message: string }).message
+              : "Unknown error";
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `Error: ${message}` },
+          ]);
+        }
+      };
+
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+          const rawEvents = buffer.split("\n\n");
+          buffer = rawEvents.pop() || "";
 
-          let eventType = "message";
-          for (const line of lines) {
-            if (line.startsWith("event: ")) {
-              eventType = line.slice(7).trim();
-            } else if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
+          for (const rawEvent of rawEvents) {
+            const lines = rawEvent.split("\n");
+            let eventType = "message";
+            const dataLines: string[] = [];
 
-                if (eventType === "message") {
-                  assistantContent += data.content;
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    const lastIdx = updated.length - 1;
-                    if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                      updated[lastIdx] = {
-                        ...updated[lastIdx],
-                        content: assistantContent,
-                      };
-                    } else {
-                      updated.push({ role: "assistant", content: assistantContent });
-                    }
-                    return updated;
-                  });
-                } else if (eventType === "status") {
-                  const nextStep = normalizeActivityStep(data);
-                  if (!nextStep) continue;
-                  setActivitySteps((prev) => {
-                    const existing = prev.findIndex((s) => s.id === nextStep.id);
-                    if (existing >= 0) {
-                      const updated = [...prev];
-                      updated[existing] = nextStep;
-                      return updated;
-                    }
-                    return [...prev, nextStep];
-                  });
-                } else if (eventType === "document") {
-                  setDocuments((prev) => [...prev, data]);
-                } else if (eventType === "job_result") {
-                  setJobResults((prev) => [...prev, data]);
-                } else if (eventType === "error") {
-                  setMessages((prev) => [
-                    ...prev,
-                    { role: "assistant", content: `Error: ${data.message}` },
-                  ]);
-                }
-              } catch {
-                // Skip malformed JSON
+            for (const line of lines) {
+              if (line.startsWith("event: ")) {
+                eventType = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                dataLines.push(line.slice(6));
               }
+            }
+
+            if (dataLines.length === 0) {
+              continue;
+            }
+
+            try {
+              const data = JSON.parse(dataLines.join("\n"));
+              handleSseEvent(eventType, data);
+            } catch {
+              // Skip malformed JSON
             }
           }
         }
