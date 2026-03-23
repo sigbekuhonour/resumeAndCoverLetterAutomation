@@ -214,6 +214,40 @@ def _build_document_variants(doc_type: str, sections: dict) -> list[dict[str, An
     return variants
 
 
+def _build_document_variants_for_request(
+    doc_type: str,
+    sections: dict,
+    *,
+    force_variant_key: str | None = None,
+) -> list[dict[str, Any]]:
+    normalized_force = str(force_variant_key or "").strip().lower() or None
+    if normalized_force == "ats_safe":
+        forced_sections = dict(sections)
+        forced_sections.pop("theme_id", None)
+        forced_sections["layout_strategy"] = "ats_safe"
+        forced_plan = build_document_plan(doc_type, forced_sections)
+        return [
+            {
+                "plan": forced_plan,
+                "variant_key": "ats_safe",
+                "variant_label": _variant_label("ats_safe"),
+            }
+        ]
+    if normalized_force == "creative_safe":
+        forced_sections = dict(sections)
+        forced_sections.pop("theme_id", None)
+        forced_sections["layout_strategy"] = "creative_safe"
+        forced_plan = build_document_plan(doc_type, forced_sections)
+        return [
+            {
+                "plan": forced_plan,
+                "variant_key": "creative_safe",
+                "variant_label": _variant_label("creative_safe"),
+            }
+        ]
+    return _build_document_variants(doc_type, sections)
+
+
 def _document_variant_summary(variants: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
     labels = [
         variant["variant_label"]
@@ -277,6 +311,9 @@ def _generate_document_sync(
     user_id: str,
     job_id: str,
     progress_callback: DocumentProgressCallback | None = None,
+    conversation_id: str | None = None,
+    force_variant_key: str | None = None,
+    variant_group_id: str | None = None,
 ) -> dict:
     """Generate a .docx document from template and upload to Supabase Storage."""
     logger.info("generate_document type=%s job_id=%s", doc_type, job_id[:8])
@@ -288,7 +325,11 @@ def _generate_document_sync(
             phase="plan",
             state="running",
         )
-        variants = _build_document_variants(doc_type, sections)
+        variants = _build_document_variants_for_request(
+            doc_type,
+            sections,
+            force_variant_key=force_variant_key,
+        )
         plan = variants[0]["plan"]
         plan_detail, plan_meta = _document_variant_summary(variants)
         _emit_document_progress(
@@ -369,7 +410,10 @@ def _generate_document_sync(
             ),
         )
         active_phase = "save"
-        variant_group_id = str(uuid.uuid4()) if len(rendered_documents) > 1 else None
+        active_variant_group_id = (
+            variant_group_id
+            or (str(uuid.uuid4()) if len(rendered_documents) > 1 else None)
+        )
         saved_documents: list[dict[str, Any]] = []
         for rendered in rendered_documents:
             variant_key = rendered.get("variant_key")
@@ -404,7 +448,9 @@ def _generate_document_sync(
                 "theme_id": variant_plan.theme_id,
                 "variant_key": variant_key,
                 "variant_label": variant_label,
-                "variant_group_id": variant_group_id,
+                "variant_group_id": active_variant_group_id,
+                "source_sections": sections,
+                "source_conversation_id": conversation_id,
             }).execute()
             saved_documents.append(
                 {
@@ -417,7 +463,8 @@ def _generate_document_sync(
                     "document_plan": serialize_document_plan(variant_plan),
                     "variant_key": variant_key,
                     "variant_label": variant_label,
-                    "variant_group_id": variant_group_id,
+                    "variant_group_id": active_variant_group_id,
+                    "can_regenerate": bool(sections),
                 }
             )
         _emit_document_progress(
@@ -441,6 +488,7 @@ def _generate_document_sync(
             **primary_document,
             "documents": saved_documents,
             "variant_count": len(saved_documents),
+            "variant_group_id": active_variant_group_id,
         }
     except Exception as e:
         logger.error("generate_document failed: %s", e)
@@ -459,6 +507,9 @@ async def generate_document(
     user_id: str,
     job_id: str,
     progress_callback: DocumentProgressCallback | None = None,
+    conversation_id: str | None = None,
+    force_variant_key: str | None = None,
+    variant_group_id: str | None = None,
 ) -> dict:
     return await asyncio.to_thread(
         _generate_document_sync,
@@ -467,6 +518,9 @@ async def generate_document(
         user_id,
         job_id,
         progress_callback,
+        conversation_id,
+        force_variant_key,
+        variant_group_id,
     )
 
 

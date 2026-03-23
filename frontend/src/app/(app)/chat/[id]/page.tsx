@@ -6,6 +6,7 @@ import {
   apiJson,
   apiUpload,
   handleTeamAccessRedirect,
+  regenerateGeneratedDocument,
   toApiError,
 } from "@/lib/api";
 import {
@@ -37,10 +38,11 @@ interface DocumentEvent {
   doc_type: string;
   filename?: string;
   download_url: string;
-  theme_id?: string;
+  theme_id?: string | null;
   variant_key?: string | null;
   variant_label?: string | null;
   variant_group_id?: string | null;
+  can_regenerate?: boolean;
   page_budget?: number;
   document_plan?: {
     repair_history?: Array<{ action?: string }>;
@@ -114,6 +116,7 @@ export default function ChatPage() {
   const [activitySteps, setActivitySteps] = useState<ActivityStep[]>([]);
   const [documents, setDocuments] = useState<DocumentEvent[]>([]);
   const [jobResults, setJobResults] = useState<JobResultEvent[]>([]);
+  const [regeneratingDocumentId, setRegeneratingDocumentId] = useState<string | null>(null);
   const [pendingInitialMessage, setPendingInitialMessage] = useState<string | null>(null);
   const [initialMessageChecked, setInitialMessageChecked] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(true);
@@ -426,6 +429,35 @@ export default function ChatPage() {
     doSend(userMsg);
   };
 
+  const handleRegenerateDocument = async (documentId: string) => {
+    if (regeneratingDocumentId) return;
+    try {
+      setRegeneratingDocumentId(documentId);
+      const result = await regenerateGeneratedDocument(documentId);
+      setDocuments((prev) =>
+        prev.map((document) =>
+          document.document_id === result.replaced_document_id
+            ? { ...document, ...result.document }
+            : document
+        )
+      );
+    } catch (error) {
+      console.error("Failed to regenerate document:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            error instanceof Error
+              ? `I couldn't regenerate that document: ${error.message}`
+              : "I couldn't regenerate that document right now.",
+        },
+      ]);
+    } finally {
+      setRegeneratingDocumentId(null);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -511,6 +543,9 @@ export default function ChatPage() {
                   documentId={d.document_id}
                   filename={d.filename || `${d.doc_type === "cover_letter" ? "cover-letter" : "resume"}.docx`}
                   variantLabel={d.variant_label}
+                  canRegenerate={Boolean(d.can_regenerate)}
+                  regenerating={regeneratingDocumentId === d.document_id}
+                  onRegenerate={() => handleRegenerateDocument(d.document_id)}
                 />
               );
             }
@@ -535,6 +570,9 @@ export default function ChatPage() {
                       filename={d.filename || `${d.doc_type === "cover_letter" ? "cover-letter" : "resume"}.docx`}
                       variantLabel={d.variant_label}
                       embedded
+                      canRegenerate={Boolean(d.can_regenerate)}
+                      regenerating={regeneratingDocumentId === d.document_id}
+                      onRegenerate={() => handleRegenerateDocument(d.document_id)}
                     />
                   ))}
                 </div>

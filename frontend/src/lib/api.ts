@@ -146,3 +146,24 @@ export async function downloadGeneratedDocument(
   anchor.remove();
   URL.revokeObjectURL(objectUrl);
 }
+
+export interface RegeneratedDocument {
+  document_id: string;
+  doc_type: string;
+  filename: string;
+  download_url: string;
+  theme_id?: string | null;
+  variant_key?: string | null;
+  variant_label?: string | null;
+  variant_group_id?: string | null;
+  can_regenerate?: boolean;
+}
+
+export async function regenerateGeneratedDocument(documentId: string) {
+  return apiJson<{
+    replaced_document_id: string;
+    document: RegeneratedDocument;
+  }>(`/generated-documents/${documentId}/regenerate`, {
+    method: "POST",
+  });
+}

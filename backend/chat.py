@@ -877,6 +877,7 @@ async def _execute_tool(
             user_id=user_id,
             job_id=job_id,
             progress_callback=progress_callback,
+            conversation_id=conversation_id,
         )
         if "error" in result:
             logger.error("tool_result generate_document error=%s", result["error"])

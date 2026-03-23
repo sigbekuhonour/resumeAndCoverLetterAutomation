@@ -9,6 +9,9 @@ interface DownloadCardProps {
   filename: string;
   variantLabel?: string | null;
   embedded?: boolean;
+  canRegenerate?: boolean;
+  onRegenerate?: () => Promise<void> | void;
+  regenerating?: boolean;
 }
 
 export default function DownloadCard({
@@ -17,6 +20,9 @@ export default function DownloadCard({
   filename,
   variantLabel,
   embedded = false,
+  canRegenerate = false,
+  onRegenerate,
+  regenerating = false,
 }: DownloadCardProps) {
   const label = docType === "resume" ? "Resume" : "Cover Letter";
   const variantHint =
@@ -64,14 +70,26 @@ export default function DownloadCard({
         {variantHint && (
           <p className="text-[11px] text-text-tertiary">{variantHint}</p>
         )}
-        <button
-          type="button"
-          onClick={handleDownload}
-          disabled={downloading}
-          className="text-left text-xs text-accent transition hover:underline disabled:cursor-wait disabled:opacity-70"
-        >
-          {downloading ? "Preparing download..." : "Download file"}
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={downloading || regenerating}
+            className="text-left text-xs text-accent transition hover:underline disabled:cursor-wait disabled:opacity-70"
+          >
+            {downloading ? "Preparing download..." : "Download file"}
+          </button>
+          {canRegenerate && onRegenerate && (
+            <button
+              type="button"
+              onClick={() => void onRegenerate()}
+              disabled={downloading || regenerating}
+              className="text-left text-xs text-text-tertiary transition hover:text-accent hover:underline disabled:cursor-wait disabled:opacity-70"
+            >
+              {regenerating ? "Regenerating..." : "Regenerate this version"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

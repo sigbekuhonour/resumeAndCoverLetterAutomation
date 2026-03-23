@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { apiJson, apiFetch, downloadGeneratedDocument } from "@/lib/api";
+import {
+  apiJson,
+  apiFetch,
+  downloadGeneratedDocument,
+  regenerateGeneratedDocument,
+} from "@/lib/api";
 import {
   documentBundleDescription,
   documentBundleTitle,
@@ -40,6 +45,7 @@ interface ProfileData {
     variant_key?: string | null;
     variant_label?: string | null;
     variant_group_id?: string | null;
+    can_regenerate?: boolean;
   }>;
 }
 
@@ -125,6 +131,7 @@ export default function ProfilePage() {
   // Account editing
   const [editName, setEditName] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const [regeneratingDocumentId, setRegeneratingDocumentId] = useState<string | null>(null);
 
   // Context editing
   const [editingContextId, setEditingContextId] = useState<string | null>(null);
@@ -213,6 +220,27 @@ export default function ProfilePage() {
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
         </button>
+        {doc.can_regenerate && (
+          <button
+            type="button"
+            onClick={() => void handleRegenerateDocument(doc.id)}
+            disabled={regeneratingDocumentId === doc.id}
+            className="p-1.5 rounded hover:bg-bg-tertiary transition text-text-tertiary hover:text-accent disabled:cursor-wait disabled:opacity-70"
+            title="Regenerate"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+          </button>
+        )}
         <button
           onClick={() => handleDeleteDocument(doc.id)}
           className="p-1.5 rounded hover:bg-danger/10 transition text-text-tertiary hover:text-danger"
@@ -352,6 +380,18 @@ export default function ProfilePage() {
       await downloadGeneratedDocument(id, filename);
     } catch {
       setError("Failed to download document");
+    }
+  };
+
+  const handleRegenerateDocument = async (id: string) => {
+    try {
+      setRegeneratingDocumentId(id);
+      await regenerateGeneratedDocument(id);
+      await fetchProfile();
+    } catch {
+      setError("Failed to regenerate document");
+    } finally {
+      setRegeneratingDocumentId(null);
     }
   };
 

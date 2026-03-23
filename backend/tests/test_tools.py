@@ -301,6 +301,8 @@ def test_generate_document_sync_emits_progress_events(monkeypatch):
         event_name == "generated_documents"
         and payload["doc_type"] == "resume"
         and payload["filename"] == "Avery-Carter-Backend-Engineer-Boam-AI-Resume-v2.docx"
+        and payload["source_sections"]["title"] == "Backend Engineer"
+        and payload["source_conversation_id"] is None
         for event_name, payload in dummy_supabase.events
     )
 
@@ -394,6 +396,92 @@ def test_generate_document_sync_emits_dual_resume_variants_for_design_roles(monk
     assert result["variant_group_id"] == result["documents"][1]["variant_group_id"]
     assert progress_events[1]["detail"] == "Prepared Creative-safe and ATS-safe variants."
     assert progress_events[-1]["detail"] == "Stored both variants and generated download links."
+
+
+def test_generate_document_sync_can_regenerate_single_variant(monkeypatch):
+    dummy_supabase = _DummySupabase()
+    creative_plan = DocumentPlan(
+        doc_type="resume",
+        page_budget=1,
+        theme_id="modern_minimal",
+        density="balanced",
+        normalized_sections={
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+        },
+        section_order=["summary"],
+        layout_metrics={"bullet_count": 0},
+        verification={"status": "passed", "issues": []},
+        repair_history=[],
+        attempt_count=1,
+    )
+    ats_plan = DocumentPlan(
+        doc_type="resume",
+        page_budget=1,
+        theme_id="ats_minimal",
+        density="balanced",
+        normalized_sections={
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+            "layout_strategy": "ats_safe",
+        },
+        section_order=["summary"],
+        layout_metrics={"bullet_count": 0},
+        verification={"status": "passed", "issues": []},
+        repair_history=[],
+        attempt_count=1,
+    )
+
+    def _build_plan(doc_type, sections):
+        if sections.get("layout_strategy") == "ats_safe":
+            return ats_plan
+        return creative_plan
+
+    monkeypatch.setattr(tools, "supabase", dummy_supabase)
+    monkeypatch.setattr(tools, "build_document_plan", _build_plan)
+    monkeypatch.setattr(
+        tools,
+        "render_document",
+        lambda built_plan: f"docx-{built_plan.theme_id}".encode(),
+    )
+    monkeypatch.setattr(
+        tools,
+        "serialize_document_plan",
+        lambda built_plan: {"theme_id": built_plan.theme_id},
+    )
+
+    result = tools._generate_document_sync(
+        "resume",
+        {
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "company": "North Coast",
+        },
+        "user-1",
+        "job-1",
+        conversation_id="conv-1",
+        force_variant_key="ats_safe",
+        variant_group_id="bundle-1",
+    )
+
+    assert result["variant_count"] == 1
+    assert result["variant_group_id"] == "bundle-1"
+    assert result["variant_key"] == "ats_safe"
+    assert result["variant_label"] == "ATS-safe"
+    assert result["theme_id"] == "ats_minimal"
+    assert result["can_regenerate"] is True
+    assert result["filename"] == "Jordan-Vale-Product-Designer-North-Coast-Resume-ATS.docx"
+    generated_rows = [
+        payload
+        for event_name, payload in dummy_supabase.events
+        if event_name == "generated_documents"
+    ]
+    assert len(generated_rows) == 1
+    assert generated_rows[0]["variant_group_id"] == "bundle-1"
+    assert generated_rows[0]["source_conversation_id"] == "conv-1"
+    assert generated_rows[0]["source_sections"]["company"] == "North Coast"
 
 
 def test_generate_document_sync_marks_render_failures(monkeypatch):
