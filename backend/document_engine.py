@@ -43,6 +43,10 @@ class ThemeSpec:
     max_bullets_per_experience: int
     summary_target_chars: int
     skills_target_chars: int
+    resume_header_alignment: str = "center"
+    cover_letter_date_alignment: str = "left"
+    heading_case: str = "title"
+    title_italic: bool = False
 
 
 @dataclass
@@ -100,6 +104,10 @@ THEMES: dict[str, ThemeSpec] = {
         max_bullets_per_experience=2,
         summary_target_chars=320,
         skills_target_chars=220,
+        resume_header_alignment="center",
+        cover_letter_date_alignment="left",
+        heading_case="title",
+        title_italic=False,
     ),
     "technical_compact": ThemeSpec(
         theme_id="technical_compact",
@@ -126,6 +134,40 @@ THEMES: dict[str, ThemeSpec] = {
         max_bullets_per_experience=2,
         summary_target_chars=260,
         skills_target_chars=260,
+        resume_header_alignment="center",
+        cover_letter_date_alignment="left",
+        heading_case="title",
+        title_italic=False,
+    ),
+    "executive_clean": ThemeSpec(
+        theme_id="executive_clean",
+        density="balanced",
+        body_font="Cambria",
+        body_size_pt=10.8,
+        body_color=(26, 31, 36),
+        heading_font="Cambria",
+        heading_size_pt=11.0,
+        heading_color=(52, 73, 94),
+        name_size_pt=24.0,
+        title_size_pt=11.5,
+        title_color=(88, 95, 104),
+        top_margin_in=0.85,
+        right_margin_in=1.0,
+        bottom_margin_in=0.8,
+        left_margin_in=1.0,
+        line_spacing=1.04,
+        paragraph_after_pt=4.0,
+        section_before_pt=12.0,
+        section_after_pt=4.0,
+        bullet_indent_in=0.22,
+        max_resume_experiences=3,
+        max_bullets_per_experience=2,
+        summary_target_chars=290,
+        skills_target_chars=200,
+        resume_header_alignment="left",
+        cover_letter_date_alignment="right",
+        heading_case="upper",
+        title_italic=True,
     ),
 }
 
@@ -218,6 +260,33 @@ def _normalize_cover_letter_paragraphs(paragraphs) -> list[str]:
         total_chars = sum(len(paragraph) for paragraph in normalized)
 
     return [paragraph for paragraph in normalized if paragraph]
+
+
+def _has_leadership_signal(normalized_sections: dict) -> bool:
+    leadership_markers = (
+        "staff",
+        "principal",
+        "lead",
+        "director",
+        "manager",
+        "head of",
+        "leadership",
+        "mentored",
+        "mentoring",
+        "strategy",
+    )
+    text_parts = [
+        normalized_sections.get("title", ""),
+        normalized_sections.get("summary", ""),
+        normalized_sections.get("role", ""),
+    ]
+    for experience in normalized_sections.get("experiences", []):
+        if not isinstance(experience, dict):
+            continue
+        text_parts.append(str(experience.get("role", "")))
+        text_parts.extend(str(bullet) for bullet in experience.get("bullets", []))
+    combined = " ".join(_clean_whitespace(part).lower() for part in text_parts if part)
+    return any(marker in combined for marker in leadership_markers)
 
 
 def _fit_cover_letter_paragraphs(
@@ -375,9 +444,15 @@ def _choose_theme(doc_type: str, normalized_sections: dict) -> ThemeSpec:
     if requested in THEMES:
         return THEMES[requested]
 
+    has_leadership_signal = _has_leadership_signal(normalized_sections)
+
     if doc_type == "cover_letter":
         total_chars = sum(len(paragraph) for paragraph in normalized_sections.get("paragraphs", []))
-        return THEMES["technical_compact"] if total_chars > 780 else THEMES["classic_professional"]
+        if total_chars > 780:
+            return THEMES["technical_compact"]
+        if has_leadership_signal:
+            return THEMES["executive_clean"]
+        return THEMES["classic_professional"]
 
     experiences = normalized_sections.get("experiences", [])
     bullet_count = sum(len(item.get("bullets", [])) for item in experiences if isinstance(item, dict))
@@ -387,6 +462,10 @@ def _choose_theme(doc_type: str, normalized_sections: dict) -> ThemeSpec:
         + len(experiences) * 2
         + bullet_count
     )
+    if density_score >= 12:
+        return THEMES["technical_compact"]
+    if has_leadership_signal:
+        return THEMES["executive_clean"]
     if density_score >= 10:
         return THEMES["technical_compact"]
     return THEMES["classic_professional"]
@@ -561,7 +640,7 @@ def _next_repair_action(
     theme: ThemeSpec,
     repair_level: int,
 ) -> tuple[RepairAction | None, str | None, int]:
-    if theme.theme_id != "technical_compact":
+    if theme.density != "compact":
         return (
             RepairAction(
                 action="switch_theme",
@@ -763,7 +842,8 @@ def _add_section_heading(document: Document, text: str, theme: ThemeSpec):
     paragraph.paragraph_format.space_before = Pt(theme.section_before_pt)
     paragraph.paragraph_format.space_after = Pt(theme.section_after_pt)
     paragraph.paragraph_format.keep_with_next = True
-    run = paragraph.add_run(text)
+    heading_text = text.upper() if theme.heading_case == "upper" else text
+    run = paragraph.add_run(heading_text)
     run.bold = True
     run.font.name = theme.heading_font
     run.font.size = Pt(theme.heading_size_pt)
@@ -792,21 +872,27 @@ def _render_resume(plan: DocumentPlan) -> bytes:
     _apply_theme(document, theme)
 
     header = document.add_paragraph()
-    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    header.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER
+        if theme.resume_header_alignment == "center"
+        else WD_ALIGN_PARAGRAPH.LEFT
+    )
     header.paragraph_format.space_after = Pt(4)
     header.paragraph_format.keep_with_next = True
     name_run = header.add_run(sections.get("name", ""))
     name_run.bold = True
     name_run.font.name = theme.heading_font
     name_run.font.size = Pt(theme.name_size_pt)
+    name_run.font.color.rgb = RGBColor(*theme.heading_color)
 
     title = document.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title.alignment = header.alignment
     title.paragraph_format.space_after = Pt(theme.section_before_pt)
     title_run = title.add_run(sections.get("title", ""))
     title_run.font.name = theme.body_font
     title_run.font.size = Pt(theme.title_size_pt)
     title_run.font.color.rgb = RGBColor(*theme.title_color)
+    title_run.italic = theme.title_italic
 
     if sections.get("summary"):
         _add_section_heading(document, "Summary", theme)
@@ -860,7 +946,12 @@ def _render_cover_letter(plan: DocumentPlan) -> bytes:
     document = Document()
     _apply_theme(document, theme)
 
-    _add_body_paragraph(document, sections.get("date", ""), theme)
+    date_paragraph = _add_body_paragraph(document, sections.get("date", ""), theme)
+    date_paragraph.alignment = (
+        WD_ALIGN_PARAGRAPH.RIGHT
+        if theme.cover_letter_date_alignment == "right"
+        else WD_ALIGN_PARAGRAPH.LEFT
+    )
 
     recipient_lines = [line for line in [sections.get("hiring_manager", ""), sections.get("company", "")] if line]
     for index, line_text in enumerate(recipient_lines):

@@ -131,6 +131,7 @@ Implemented now:
 - approved theme catalog with:
   - `classic_professional`
   - `technical_compact`
+  - `executive_clean`
 - normalization and compaction rules for:
   - resume summary
   - resume skills
@@ -142,6 +143,8 @@ Implemented now:
 - local render verification tooling on macOS via LibreOffice -> PDF -> PNG
 - named regression fixtures plus a local regression runner for fixture output generation
 - backend contract that allows the model to select only approved `theme_id` values
+- deterministic leadership-aware theme selection for balanced executive-style documents
+- theme-specific rendering differences that stay within safe flow-layout primitives
 
 Not implemented yet:
 
@@ -153,7 +156,7 @@ Not implemented yet:
 
 This means the engine has moved from design-only into an initial controlled
 production baseline. Planning, heuristic verification, and bounded repair are in
-place; rendered verification and richer theme coverage are the next major phase.
+place; rendered verification and broader theme coverage are the next major phase.
 
 ## Engine Architecture
 
