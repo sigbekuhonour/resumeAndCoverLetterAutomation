@@ -134,11 +134,13 @@ Implemented now:
   - `classic_professional`
   - `technical_compact`
   - `executive_clean`
+  - `modern_minimal`
 - deterministic `layout_strategy` support with:
   - `ats_safe`
   - `balanced`
   - `executive`
   - `compact`
+  - `creative_safe`
 - normalization and compaction rules for:
   - resume summary
   - resume skills
@@ -153,6 +155,7 @@ Implemented now:
 - deterministic leadership-aware theme selection for balanced executive-style documents
 - deterministic ATS-safe selection for simplicity-first roles and workflows
 - theme-specific rendering differences that stay within safe flow-layout primitives
+- deterministic design-role selection for visually stronger but still ATS-safe documents
 
 Not implemented yet:
 
@@ -235,9 +238,9 @@ Theme choice should be based on:
 But the available outputs are constrained to audited options, for example:
 
 - `ats_minimal`
+- `modern_minimal`
 - `technical_compact`
 - `executive_clean`
-- `modern_minimal`
 - `classic_professional`
 
 Each theme has deterministic variants:
@@ -255,6 +258,7 @@ When the exact theme should remain engine-controlled, the model can choose a
 - `balanced`
 - `executive`
 - `compact`
+- `creative_safe`
 
 The engine then resolves the concrete theme deterministically within that
 strategy.

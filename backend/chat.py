@@ -55,7 +55,7 @@ GENERATE_DOCUMENT_DECLARATION = types.FunctionDeclaration(
             "doc_type": types.Schema(type=types.Type.STRING, description="'resume' or 'cover_letter'"),
             "sections": types.Schema(
                 type=types.Type.OBJECT,
-                description="Structured content for the document. Resume: {name, title, summary, experiences: [{company, role, dates, bullets}], skills, education}. Cover letter: {name, date, company, hiring_manager, role, paragraphs: [str]}. Optional design inputs: theme_id in {'classic_professional','technical_compact','executive_clean','ats_minimal'} and layout_strategy in {'ats_safe','balanced','executive','compact'}.",
+                description="Structured content for the document. Resume: {name, title, summary, experiences: [{company, role, dates, bullets}], skills, education}. Cover letter: {name, date, company, hiring_manager, role, paragraphs: [str]}. Optional design inputs: theme_id in {'classic_professional','technical_compact','executive_clean','ats_minimal','modern_minimal'} and layout_strategy in {'ats_safe','balanced','executive','compact','creative_safe'}.",
             ),
         },
         required=["doc_type", "sections"],
@@ -131,12 +131,14 @@ If you choose a design direction, do it by selecting an approved `theme_id` insi
 - `classic_professional` for balanced, conservative presentation
 - `technical_compact` for denser technical resumes and tighter page budgets
 - `executive_clean` for leadership-oriented applications with a more formal, editorial hierarchy
+- `modern_minimal` for design-adjacent or portfolio-aware applications while staying ATS-safe
 
 You may also set `layout_strategy` in `sections` to one of:
 - `ats_safe`
 - `balanced`
 - `executive`
 - `compact`
+- `creative_safe`
 
 Use `layout_strategy` when you want the engine to choose the exact theme deterministically within that direction. Do not invent custom themes or arbitrary formatting instructions.
 
@@ -163,7 +165,7 @@ response. The UI will automatically show a download card.
 
 When generating a cover letter, keep it to one page: three concise body paragraphs plus a brief closing paragraph, and avoid repeating the resume verbatim.
 
-If a theme choice would help, set `theme_id` in `sections` to one of `ats_minimal`, `classic_professional`, `technical_compact`, or `executive_clean`, or set `layout_strategy` to one of `ats_safe`, `balanced`, `executive`, or `compact`. Do not invent other theme names or strategies."""
+If a theme choice would help, set `theme_id` in `sections` to one of `ats_minimal`, `classic_professional`, `technical_compact`, `executive_clean`, or `modern_minimal`, or set `layout_strategy` to one of `ats_safe`, `balanced`, `executive`, `compact`, or `creative_safe`. Do not invent other theme names or strategies."""
 
 FIND_JOBS_PROMPT = """You are a career assistant helping the user find jobs that match their profile.
 
@@ -180,7 +182,7 @@ Be proactive in suggesting roles based on the user's skills and experience.
 
 When generating a cover letter, keep it to one page: three concise body paragraphs plus a brief closing paragraph, and avoid repeating the resume verbatim.
 
-If a theme choice would help, set `theme_id` in `sections` to one of `ats_minimal`, `classic_professional`, `technical_compact`, or `executive_clean`, or set `layout_strategy` to one of `ats_safe`, `balanced`, `executive`, or `compact`. Do not invent other theme names or strategies.
+If a theme choice would help, set `theme_id` in `sections` to one of `ats_minimal`, `classic_professional`, `technical_compact`, `executive_clean`, or `modern_minimal`, or set `layout_strategy` to one of `ats_safe`, `balanced`, `executive`, `compact`, or `creative_safe`. Do not invent other theme names or strategies.
 
 IMPORTANT: When you generate a document, do NOT paste the download URL in your
 response. The UI will automatically show a download card."""

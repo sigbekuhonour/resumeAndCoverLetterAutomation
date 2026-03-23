@@ -131,6 +131,40 @@ def test_build_document_plan_chooses_ats_minimal_for_ats_safe_strategy():
     assert plan.repair_history == []
 
 
+def test_build_document_plan_chooses_modern_minimal_for_design_role():
+    plan = document_engine.build_document_plan(
+        "resume",
+        {
+            "name": "Jordan Vale",
+            "title": "Product Designer",
+            "summary": (
+                "Product designer focused on UX systems, interaction design, and "
+                "clear product storytelling across web and mobile surfaces."
+            ),
+            "skills": {
+                "Design": ["Figma", "Prototyping", "Design systems"],
+                "Product": ["UX research", "Interaction design", "Accessibility"],
+            },
+            "education": "BDes Interaction Design",
+            "experiences": [
+                {
+                    "company": "North Coast",
+                    "role": "Senior Product Designer",
+                    "dates": "2022 to Present",
+                    "bullets": [
+                        "Led UX design for core product flows and design system work.",
+                        "Partnered with product and engineering on shipped interaction details.",
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert plan.theme_id == "modern_minimal"
+    assert plan.verification["status"] == "passed"
+    assert plan.repair_history == []
+
+
 def test_build_document_plan_repairs_dense_resume_until_within_budget():
     plan = document_engine.build_document_plan(
         "resume",
@@ -315,3 +349,27 @@ def test_render_document_applies_ats_minimal_header_alignment():
     assert plan.theme_id == "ats_minimal"
     assert document.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.LEFT
     assert document.paragraphs[2].text == "Summary"
+
+
+def test_render_document_applies_modern_minimal_cover_letter_date_alignment():
+    plan = document_engine.build_document_plan(
+        "cover_letter",
+        {
+            "name": "Jordan Vale",
+            "company": "North Coast",
+            "role": "Product Designer",
+            "layout_strategy": "creative_safe",
+            "paragraphs": [
+                "I am excited to apply for the Product Designer role at North Coast.",
+                "I design thoughtful UX flows, systems, and interaction details for product teams.",
+                "I would bring strong product thinking, visual clarity, and collaboration to the role.",
+                "Thank you for your time and consideration.",
+            ],
+        },
+    )
+
+    rendered = document_engine.render_document(plan)
+    document = Document(io.BytesIO(rendered))
+
+    assert plan.theme_id == "modern_minimal"
+    assert document.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
