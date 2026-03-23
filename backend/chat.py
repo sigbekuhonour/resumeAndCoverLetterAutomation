@@ -600,6 +600,128 @@ def _tool_status_payload(
     )
 
 
+def _tool_run_summary(executed_tools: list[dict]) -> str:
+    lines: list[str] = []
+    for item in executed_tools:
+        name = item.get("name", "tool")
+        state = item.get("state", "done")
+        result = item.get("result")
+        if name == "generate_document" and isinstance(result, dict):
+            filename = result.get("filename")
+            doc_type = str(result.get("doc_type", "document")).replace("_", " ")
+            if state == "failed":
+                detail = result.get("error", "generation failed")
+            elif filename:
+                detail = f"created {doc_type} file {filename}"
+            else:
+                detail = f"generated {doc_type}"
+        elif name == "present_job_results" and isinstance(result, dict):
+            count = len(result.get("results", []))
+            detail = f"prepared {count} job match card{'s' if count != 1 else ''}"
+        elif name == "search_jobs" and isinstance(result, list):
+            count = len(result)
+            detail = f"found {count} search result{'s' if count != 1 else ''}"
+        elif name == "scrape_job" and isinstance(result, dict):
+            detail = result.get("error", "scraped the job posting") if state == "failed" else "scraped the job posting"
+        elif name == "save_user_context" and isinstance(result, dict):
+            category = item.get("args", {}).get("category")
+            detail = f"saved {str(category).replace('_', ' ')} to memory" if category else "saved user context"
+        else:
+            detail = "completed"
+        lines.append(f"- {name}: {detail}")
+    return "\n".join(lines)
+
+
+def _deterministic_tool_only_fallback(executed_tools: list[dict]) -> str:
+    successful_documents = [
+        item for item in executed_tools
+        if item.get("name") == "generate_document"
+        and item.get("state") == "done"
+        and isinstance(item.get("result"), dict)
+        and item["result"].get("document_id")
+    ]
+    failed_documents = [
+        item for item in executed_tools
+        if item.get("name") == "generate_document"
+        and item.get("state") == "failed"
+    ]
+
+    if successful_documents:
+        doc_labels = [
+            str(item["result"].get("doc_type", "document")).replace("_", " ")
+            for item in successful_documents
+        ]
+        if len(doc_labels) == 2 and sorted(doc_labels) == ["cover letter", "resume"]:
+            return "Your resume and cover letter are ready. The download cards are below. If you want any revisions, tell me what to change."
+        if len(doc_labels) == 1:
+            return f"Your {doc_labels[0]} is ready. The download card is below. If you want revisions, tell me what to change."
+        return "Your documents are ready. The download cards are below. If you want revisions, tell me what to change."
+
+    if failed_documents:
+        error = failed_documents[-1].get("result", {}).get("error")
+        if error:
+            return f"I hit an issue while generating the document: {error}"
+        return "I hit an issue while generating the document. Try again or tell me what to adjust."
+
+    last_presented_jobs = next(
+        (
+            item for item in reversed(executed_tools)
+            if item.get("name") == "present_job_results" and item.get("state") == "done"
+        ),
+        None,
+    )
+    if last_presented_jobs and isinstance(last_presented_jobs.get("result"), dict):
+        count = len(last_presented_jobs["result"].get("results", []))
+        return f"I found {count} matching job{'s' if count != 1 else ''} and displayed them below. Tell me which one you want to pursue."
+
+    if any(item.get("name") == "scrape_job" and item.get("state") == "done" for item in executed_tools):
+        return "I reviewed the job posting. If you want, I can tailor your resume and cover letter for it."
+
+    if any(item.get("name") == "save_user_context" and item.get("state") == "done" for item in executed_tools):
+        return "I saved that information to your profile memory so I can use it in future applications."
+
+    return "I finished that step. Tell me if you want me to continue with the next part."
+
+
+def _generate_tool_only_followup_text(
+    *,
+    full_system: str,
+    contents: list[types.Content],
+    executed_tools: list[dict],
+) -> str:
+    summary = _tool_run_summary(executed_tools)
+    completion_prompt = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=f"""Tool execution for this turn is complete.
+
+Write the final assistant reply to the user now.
+- Do not call tools.
+- Do not mention internal routing or hidden mechanics.
+- Refer to files or job cards as already shown in the UI instead of pasting URLs.
+- Keep it concise and action-oriented.
+
+Tool summary:
+{summary}
+""")],
+    )
+    try:
+        response = gemini_client.models.generate_content(
+            model=MODEL,
+            contents=[*contents, completion_prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=full_system,
+                temperature=0.3,
+            ),
+        )
+        text = _response_text(response).strip()
+        if text:
+            return text
+    except Exception as error:
+        logger.warning("tool-only follow-up generation failed: %s", error)
+
+    return _deterministic_tool_only_fallback(executed_tools)
+
+
 async def _execute_tool(
     function_call: types.FunctionCall,
     user_id: str,
@@ -765,6 +887,7 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
     job_id = existing_jobs.data[0]["id"] if existing_jobs.data else None
 
     full_response = ""
+    executed_tools: list[dict] = []
     max_tool_rounds = 5
 
     for tool_round in range(max_tool_rounds):
@@ -867,6 +990,12 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
                         state=tool_state,
                         result=result,
                     )
+                    executed_tools.append({
+                        "name": fc.name,
+                        "args": dict(fc.args) if fc.args else {},
+                        "state": tool_state,
+                        "result": result,
+                    })
                     _upsert_activity_trace(activity_trace, completed_status)
                     yield ServerSentEvent(data=json.dumps(completed_status), event="status")
                     await asyncio.sleep(0)
@@ -910,6 +1039,26 @@ If tools_allowed is false, do not call any tools on this turn. Answer directly o
 
         if not has_function_call:
             break
+
+    if not full_response.strip() and executed_tools:
+        logger.warning(
+            "stream conv=%s had %d tool-only round(s) with no assistant text; generating follow-up",
+            conversation_id[:8],
+            len(executed_tools),
+        )
+        followup_text = await asyncio.to_thread(
+            _generate_tool_only_followup_text,
+            full_system=full_system,
+            contents=contents,
+            executed_tools=executed_tools,
+        )
+        if followup_text:
+            full_response = followup_text
+            yield ServerSentEvent(
+                data=json.dumps({"content": followup_text}),
+                event="message",
+            )
+            await asyncio.sleep(0)
 
     # Save assistant response
     if full_response:

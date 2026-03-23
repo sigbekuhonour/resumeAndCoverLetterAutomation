@@ -109,3 +109,96 @@ def test_document_progress_status_payload_formats_resume_subphases():
             "repair_actions": ["reduce_bullets"],
         },
     }
+
+
+def test_deterministic_tool_only_fallback_for_generated_documents():
+    text = chat._deterministic_tool_only_fallback([
+        {
+            "name": "generate_document",
+            "state": "done",
+            "result": {
+                "document_id": "resume-doc",
+                "doc_type": "resume",
+                "filename": "Aham-Sel-Resume.docx",
+            },
+        },
+        {
+            "name": "generate_document",
+            "state": "done",
+            "result": {
+                "document_id": "cover-doc",
+                "doc_type": "cover_letter",
+                "filename": "Aham-Sel-Cover-Letter.docx",
+            },
+        },
+    ])
+
+    assert text == (
+        "Your resume and cover letter are ready. The download cards are below. "
+        "If you want any revisions, tell me what to change."
+    )
+
+
+def test_generate_tool_only_followup_text_uses_model_reply(monkeypatch):
+    captured = {}
+
+    class _DummyModels:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return type("Response", (), {"text": "Your tailored resume is ready."})()
+
+    class _DummyClient:
+        models = _DummyModels()
+
+    monkeypatch.setattr(chat, "gemini_client", _DummyClient())
+
+    reply = chat._generate_tool_only_followup_text(
+        full_system="System prompt",
+        contents=[],
+        executed_tools=[
+            {
+                "name": "generate_document",
+                "args": {"doc_type": "resume"},
+                "state": "done",
+                "result": {
+                    "document_id": "resume-doc",
+                    "doc_type": "resume",
+                    "filename": "Aham-Sel-Resume.docx",
+                },
+            }
+        ],
+    )
+
+    assert reply == "Your tailored resume is ready."
+    assert "contents" in captured
+    completion_prompt = captured["contents"][-1]
+    assert "Tool execution for this turn is complete." in completion_prompt.parts[0].text
+    assert "- generate_document: created resume file Aham-Sel-Resume.docx" in completion_prompt.parts[0].text
+
+
+def test_generate_tool_only_followup_text_falls_back_when_model_is_empty(monkeypatch):
+    class _DummyModels:
+        def generate_content(self, **kwargs):
+            return type("Response", (), {"text": ""})()
+
+    class _DummyClient:
+        models = _DummyModels()
+
+    monkeypatch.setattr(chat, "gemini_client", _DummyClient())
+
+    reply = chat._generate_tool_only_followup_text(
+        full_system="System prompt",
+        contents=[],
+        executed_tools=[
+            {
+                "name": "save_user_context",
+                "args": {"category": "skills"},
+                "state": "done",
+                "result": {"status": "saved", "category": "skills"},
+            }
+        ],
+    )
+
+    assert reply == (
+        "I saved that information to your profile memory so I can use it in future applications."
+    )
