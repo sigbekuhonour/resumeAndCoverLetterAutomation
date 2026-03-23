@@ -49,15 +49,21 @@ interface UploadResponse {
   file_id: string;
 }
 
+const HIDDEN_ACTIVITY_PHASES = new Set(["understanding_request"]);
+
 function normalizeActivityStep(raw: unknown): ActivityStep | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const step = raw as Record<string, unknown>;
+  const phase = String(step.phase || step.tool || "activity");
+  if (HIDDEN_ACTIVITY_PHASES.has(phase)) {
+    return null;
+  }
   const state =
     step.state === "done" || step.state === "failed" ? step.state : "running";
 
   return {
     id: String(step.id || step.phase || step.tool || crypto.randomUUID()),
-    phase: String(step.phase || step.tool || "activity"),
+    phase,
     label: String(step.label || step.tool || "Working"),
     state,
     tool: typeof step.tool === "string" ? step.tool : undefined,
