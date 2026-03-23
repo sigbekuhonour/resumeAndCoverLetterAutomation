@@ -120,10 +120,19 @@ export default function ChatPage() {
   const streamingRef = useRef(false);
   const activityStepsRef = useRef<ActivityStep[]>([]);
   const skipNextHistoryLoadRef = useRef(false);
+  const pendingAutoSendTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     activityStepsRef.current = activitySteps;
   }, [activitySteps]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAutoSendTimeoutRef.current !== null) {
+        window.clearTimeout(pendingAutoSendTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const pendingMessage = readPendingChatMessage(id);
@@ -371,7 +380,10 @@ export default function ChatPage() {
       const messageToSend = pendingInitialMessage;
       clearPendingChatMessage(id);
       setPendingInitialMessage(null);
-      void doSend(messageToSend);
+      pendingAutoSendTimeoutRef.current = window.setTimeout(() => {
+        pendingAutoSendTimeoutRef.current = null;
+        void doSend(messageToSend);
+      }, 50);
     }
   }, [pendingInitialMessage, loadingMessages, id, doSend]);
 
