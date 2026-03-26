@@ -25,6 +25,7 @@ import ChatMessage from "@/components/ChatMessage";
 import ActivityTimeline, { type ActivityStep } from "@/components/ActivityTimeline";
 import DownloadCard from "@/components/DownloadCard";
 import JobCard from "@/components/JobCard";
+import AttachmentComposer from "@/components/AttachmentComposer";
 import { MODE_COPY } from "@/lib/conversation-modes";
 
 interface Message {
@@ -620,25 +621,12 @@ export default function ChatPage() {
       {/* Input */}
       <div className="border-t border-border px-5 py-3">
         <div className="max-w-3xl mx-auto">
-          {pendingFiles.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {pendingFiles.map((file, index) => (
-                <div
-                  key={`${file.name}-${file.size}-${index}`}
-                  className="inline-flex items-center gap-2 rounded-full border border-border bg-bg-secondary px-3 py-1 text-xs text-text-secondary"
-                >
-                  <span className="max-w-[220px] truncate">{file.name}</span>
-                  <button
-                    onClick={() => removePendingFile(index)}
-                    disabled={isComposerBusy}
-                    className="text-text-tertiary hover:text-text-primary"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <AttachmentComposer
+            files={pendingFiles}
+            uploading={uploadingAttachments}
+            onRemove={removePendingFile}
+            disabled={isComposerBusy}
+          />
           <div
             className={`flex items-center gap-2 bg-bg-secondary border border-border rounded-xl px-3.5 py-2.5 transition ${
               isComposerBusy ? "opacity-50" : ""
@@ -694,7 +682,13 @@ export default function ChatPage() {
             </button>
           </div>
           <div className="flex justify-between mt-1.5 text-[10px] text-text-tertiary px-1">
-            <span>Enter to send · Shift+Enter for newline</span>
+            <span>
+              {pendingFiles.length > 0 && !uploadingAttachments
+                ? "Attachments stay local until you send"
+                : uploadingAttachments
+                  ? "Uploading attachments with this message..."
+                  : "Enter to send · Shift+Enter for newline"}
+            </span>
             <span>Powered by Gemini</span>
           </div>
         </div>
