@@ -6,6 +6,10 @@ import { apiJson, apiUpload } from "@/lib/api";
 import { storePendingChatMessage } from "@/lib/pending-chat";
 import FileUpload from "@/components/FileUpload";
 import { MODE_COPY } from "@/lib/conversation-modes";
+import {
+  clearPendingLandingIntent,
+  readPendingLandingIntent,
+} from "@/lib/pending-landing-intent";
 
 export default function ChatIndexPage() {
   return (
@@ -38,6 +42,20 @@ function ChatIndexContent() {
   useEffect(() => {
     adjustTextarea();
   }, [input, adjustTextarea]);
+
+  useEffect(() => {
+    if (mode !== "job_to_resume" || input.trim()) {
+      return;
+    }
+
+    const pendingIntent = readPendingLandingIntent();
+    if (!pendingIntent || pendingIntent.kind !== "specific_job") {
+      return;
+    }
+
+    setInput(pendingIntent.input);
+    clearPendingLandingIntent();
+  }, [mode, input]);
 
   const createAndRedirect = async (message: string, file?: File) => {
     setSending(true);

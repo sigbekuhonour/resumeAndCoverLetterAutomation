@@ -3,11 +3,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { ApiError, apiJson, apiUpload, handleTeamAccessRedirect } from "@/lib/api";
+import { apiJson, apiUpload } from "@/lib/api";
 import { MODE_COPY } from "@/lib/conversation-modes";
 import {
-  clearPendingLandingIntent,
-  readPendingLandingIntent,
   storePendingLandingIntent,
 } from "@/lib/pending-landing-intent";
 
@@ -24,15 +22,6 @@ export default function LandingPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
-  const resumingPendingIntent = useRef(false);
-
-  const buildSpecificJobMessage = (value: string) => {
-    const trimmed = value.trim();
-    const looksLikeUrl = /^(https?:\/\/|www\.)/i.test(trimmed);
-    return looksLikeUrl
-      ? `I want to apply for this specific job posting: ${trimmed}`
-      : `I want to target this specific job or role: ${trimmed}`;
-  };
 
   useEffect(() => {
     const supabase = createClient();
@@ -54,43 +43,6 @@ export default function LandingPage() {
     };
   }, []);
 
-  const createSpecificJobConversation = async (rawInput: string) => {
-    const conv = await apiJson<{ id: string }>("/conversations", {
-      method: "POST",
-      body: JSON.stringify({ mode: "job_to_resume" }),
-    });
-    const message = buildSpecificJobMessage(rawInput);
-    clearPendingLandingIntent();
-    router.push(`/chat/${conv.id}?initial=${encodeURIComponent(message)}`);
-  };
-
-  useEffect(() => {
-    if (!sessionChecked || !isAuthenticated || resumingPendingIntent.current) {
-      return;
-    }
-
-    const pendingIntent = readPendingLandingIntent();
-    if (!pendingIntent) {
-      return;
-    }
-
-    if (pendingIntent.kind === "specific_job" && pendingIntent.input.trim()) {
-      resumingPendingIntent.current = true;
-      setInput(pendingIntent.input);
-      setLoading(true);
-      void createSpecificJobConversation(pendingIntent.input).catch((error) => {
-        if (error instanceof ApiError) {
-          handleTeamAccessRedirect(error, "/");
-        } else {
-          console.error("Failed to resume landing intent:", error);
-        }
-      }).finally(() => {
-        setLoading(false);
-        resumingPendingIntent.current = false;
-      });
-    }
-  }, [isAuthenticated, sessionChecked, router]);
-
   const ensureAuth = async (returnTo?: string): Promise<boolean> => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
@@ -107,14 +59,11 @@ export default function LandingPage() {
     setLoading(true);
     try {
       storePendingLandingIntent({ kind: "specific_job", input: input.trim() });
-      if (!(await ensureAuth("/"))) return;
-      await createSpecificJobConversation(input);
-    } catch (error) {
-      if (error instanceof ApiError) {
-        handleTeamAccessRedirect(error, "/");
-        return;
-      }
-      router.push("/login?returnTo=%2F");
+      const returnTo = "/chat?mode=job_to_resume";
+      if (!(await ensureAuth(returnTo))) return;
+      router.push(returnTo);
+    } catch {
+      router.push("/login?returnTo=%2Fchat%3Fmode%3Djob_to_resume");
     } finally {
       setLoading(false);
     }
@@ -130,11 +79,7 @@ export default function LandingPage() {
       });
       await apiUpload(`/conversations/${conv.id}/upload`, file);
       router.push(`/chat/${conv.id}?initial=${encodeURIComponent("I've uploaded my resume. Please analyze it and help me find matching jobs.")}`);
-    } catch (error) {
-      if (error instanceof ApiError) {
-        handleTeamAccessRedirect(error, "/");
-        return;
-      }
+    } catch {
       router.push("/login");
     } finally {
       setUploading(false);
