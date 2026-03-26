@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { apiJson, apiUpload } from "@/lib/api";
+import { ApiError, apiJson, apiUpload, handleTeamAccessRedirect } from "@/lib/api";
 import { MODE_COPY } from "@/lib/conversation-modes";
+import {
+  clearPendingLandingIntent,
+  readPendingLandingIntent,
+  storePendingLandingIntent,
+} from "@/lib/pending-landing-intent";
 
 const BRAND_NAME = "Resume AI";
 
@@ -15,8 +20,11 @@ export default function LandingPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const resumingPendingIntent = useRef(false);
 
   const buildSpecificJobMessage = (value: string) => {
     const trimmed = value.trim();
@@ -25,6 +33,63 @@ export default function LandingPage() {
       ? `I want to apply for this specific job posting: ${trimmed}`
       : `I want to target this specific job or role: ${trimmed}`;
   };
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsAuthenticated(Boolean(session));
+      setSessionChecked(true);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(Boolean(session));
+      setSessionChecked(true);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const createSpecificJobConversation = async (rawInput: string) => {
+    const conv = await apiJson<{ id: string }>("/conversations", {
+      method: "POST",
+      body: JSON.stringify({ mode: "job_to_resume" }),
+    });
+    const message = buildSpecificJobMessage(rawInput);
+    clearPendingLandingIntent();
+    router.push(`/chat/${conv.id}?initial=${encodeURIComponent(message)}`);
+  };
+
+  useEffect(() => {
+    if (!sessionChecked || !isAuthenticated || resumingPendingIntent.current) {
+      return;
+    }
+
+    const pendingIntent = readPendingLandingIntent();
+    if (!pendingIntent) {
+      return;
+    }
+
+    if (pendingIntent.kind === "specific_job" && pendingIntent.input.trim()) {
+      resumingPendingIntent.current = true;
+      setInput(pendingIntent.input);
+      setLoading(true);
+      void createSpecificJobConversation(pendingIntent.input).catch((error) => {
+        if (error instanceof ApiError) {
+          handleTeamAccessRedirect(error, "/");
+        } else {
+          console.error("Failed to resume landing intent:", error);
+        }
+      }).finally(() => {
+        setLoading(false);
+        resumingPendingIntent.current = false;
+      });
+    }
+  }, [isAuthenticated, sessionChecked, router]);
 
   const ensureAuth = async (returnTo?: string): Promise<boolean> => {
     const supabase = createClient();
@@ -41,15 +106,15 @@ export default function LandingPage() {
     if (!input.trim()) return;
     setLoading(true);
     try {
-      if (!(await ensureAuth("/chat"))) return;
-      const conv = await apiJson<{ id: string }>("/conversations", {
-        method: "POST",
-        body: JSON.stringify({ mode: "job_to_resume" }),
-      });
-      const message = buildSpecificJobMessage(input);
-      router.push(`/chat/${conv.id}?initial=${encodeURIComponent(message)}`);
-    } catch {
-      router.push("/login");
+      storePendingLandingIntent({ kind: "specific_job", input: input.trim() });
+      if (!(await ensureAuth("/"))) return;
+      await createSpecificJobConversation(input);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        handleTeamAccessRedirect(error, "/");
+        return;
+      }
+      router.push("/login?returnTo=%2F");
     } finally {
       setLoading(false);
     }
@@ -65,7 +130,11 @@ export default function LandingPage() {
       });
       await apiUpload(`/conversations/${conv.id}/upload`, file);
       router.push(`/chat/${conv.id}?initial=${encodeURIComponent("I've uploaded my resume. Please analyze it and help me find matching jobs.")}`);
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError) {
+        handleTeamAccessRedirect(error, "/");
+        return;
+      }
       router.push("/login");
     } finally {
       setUploading(false);
@@ -93,13 +162,27 @@ export default function LandingPage() {
         <div className="flex items-center gap-5">
           <a href="#how-it-works" className="text-sm text-text-secondary hover:text-text-primary transition">How it works</a>
           <div className="w-px h-4 bg-border" />
-          <a href="/login" className="text-sm text-text-secondary hover:text-text-primary transition">Sign in</a>
-          <a
-            href="/login"
-            className="px-4 py-1.5 text-sm font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition"
-          >
-            Get Started
-          </a>
+          {sessionChecked && isAuthenticated ? (
+            <>
+              <a href="/history" className="text-sm text-text-secondary hover:text-text-primary transition">History</a>
+              <a
+                href="/chat"
+                className="px-4 py-1.5 text-sm font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition"
+              >
+                Open app
+              </a>
+            </>
+          ) : (
+            <>
+              <a href="/login" className="text-sm text-text-secondary hover:text-text-primary transition">Sign in</a>
+              <a
+                href="/login"
+                className="px-4 py-1.5 text-sm font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition"
+              >
+                Get Started
+              </a>
+            </>
+          )}
         </div>
       </header>
 
