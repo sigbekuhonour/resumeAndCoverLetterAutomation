@@ -61,6 +61,27 @@ vercel deploy frontend \
   --env NEXT_PUBLIC_API_URL=<backend-url>
 ```
 
+### GitHub-integrated deploy
+
+If you switch from `vercel deploy frontend ...` to a GitHub-connected Vercel project,
+make sure the Vercel project is configured as a monorepo app with:
+
+- **Root Directory** = `frontend`
+- **Framework Preset** = `Next.js`
+- **Environment Variables** set in the Vercel project for both Preview and Production:
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `NEXT_PUBLIC_API_URL`
+
+If the Root Directory is left at the repository root, Vercel can build the wrong
+part of the repo successfully and still serve a blank page or `404 Not Found`,
+because the actual Next.js application lives in `frontend/` while `backend/`
+contains a separate Python service.
+
+If the `NEXT_PUBLIC_*` values are missing in the Vercel project settings, the build
+may still pass, but the deployed frontend can fail at runtime because Supabase and
+API configuration are injected from those environment variables.
+
 Update backend CORS to the final frontend URL:
 
 ```bash
